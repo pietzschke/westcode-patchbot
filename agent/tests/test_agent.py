@@ -59,6 +59,38 @@ def test_run_precheck_blocks_dirty_git_tree(tmp_path):
     assert "uncommitted" in res["reason"]
 
 
+def test_execute_compose_update_refuses_dirty_git_tree_before_docker(tmp_path):
+    opt = tmp_path / "opt"
+    svc = opt / "plausible"
+    svc.mkdir(parents=True)
+    compose_file = svc / "compose.yaml"
+    original = "services:\n  plausible:\n    image: plausible/analytics:v2.1.0\n"
+    compose_file.write_text(original)
+    docker_calls = []
+
+    def dirty_runner(cmd, cwd=None):
+        if cmd[0] == "docker":
+            docker_calls.append(cmd)
+        if cmd[:2] == ["git", "status"]:
+            return (0, " M compose.yaml\n", "")
+        return (0, "", "")
+
+    result = execute_compose_update(
+        working_dir=str(svc),
+        service="plausible",
+        target_image="plausible/analytics:v2.1.2",
+        healthcheck_url=None,
+        runner=dirty_runner,
+        allowed_root=opt,
+        timeout_sec=1,
+    )
+    assert result["status"] == "failed"
+    assert "uncommitted" in result["logs"]
+    assert docker_calls == []
+    assert compose_file.read_text() == original
+
+
+
 def test_execute_compose_update_rolls_back_on_failed_healthcheck(tmp_path):
     opt = tmp_path / "opt"
     svc = opt / "plausible"

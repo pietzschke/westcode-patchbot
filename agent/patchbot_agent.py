@@ -7,11 +7,11 @@ from pathlib import Path
 import re
 import subprocess
 import time
-from typing import Any, Callable
+from typing import Any, Callable, Tuple
 import urllib.error
 import urllib.request
 
-RunnerCallable = Callable[..., tuple[int, str, str]]
+RunnerCallable = Callable[..., Tuple[int, str, str]]
 
 ALLOWED_ACTION_TYPES = frozenset({"precheck", "compose_update", "apt_upgrade", "host_reboot"})
 COMPOSE_FILENAMES = ("compose.yaml", "compose.yml", "docker-compose.yml", "docker-compose.yaml")
@@ -298,6 +298,20 @@ def execute_compose_update(
     compose_file = _find_compose_file(workdir)
     if compose_file is None:
         raise FileNotFoundError(f"No compose file found in {workdir}")
+
+    precheck = run_precheck(
+        working_dir=working_dir,
+        target_image=target_image,
+        runner=runner,
+        allowed_root=allowed_root,
+    )
+    if not precheck["ok"]:
+        return {
+            "status": "failed",
+            "prev_image_id": "",
+            "new_image_id": "",
+            "logs": precheck["reason"],
+        }
 
     original_compose = compose_file.read_text(encoding="utf-8")
 

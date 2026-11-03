@@ -535,7 +535,18 @@ def main(argv: list[str] | None = None) -> int:
         "--allowed-root",
         default=os.environ.get("PATCHBOT_ALLOWED_ROOT", "/opt"),
     )
+    parser.add_argument(
+        "--collect-json",
+        action="store_true",
+        help="Collect host inventory and print JSON to stdout without server reporting",
+    )
     args = parser.parse_args(argv)
+    if args.collect_json:
+        inventory = collect_host_inventory(runner=default_runner)
+        inventory["hostname"] = args.hostname
+        print(json.dumps(inventory))
+        return 0
+
     base = args.server_url.rstrip("/")
     allowed_root = Path(args.allowed_root)
 

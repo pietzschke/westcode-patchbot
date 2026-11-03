@@ -30,6 +30,21 @@ KNOWN_IMAGE_ALIASES: dict[str, str] = {
 SERVICE_METADATA: dict[str, tuple[str, str]] = {
     "plausible": ("Plausible Analytics", "plausible"),
     "westcode-hub": ("Westcode Hub", "django"),
+    "service-center": ("Westcode Service-Center", "django"),
+    "ack-desk": ("Ackermann Desk", "django"),
+    "wyze-agent": ("Wyze Agent", "coder"),
+    "projectory": ("Projectory", "django"),
+    "materialdatenbank": ("Materialdatenbank", "postgres"),
+    "masteroil": ("Masteroil Shop & CMS", "django"),
+    "brockhaus": ("Brockhaus", "django"),
+    "hilde-web": ("Hildegardis-Schule Web", "django"),
+    "linklama": ("Linklama Redirects", "traefik"),
+    "ses-service-app": ("SES Service-App", "django"),
+    "ses-sl-sw-sync": ("SES SelectLine Sync", "postgres"),
+    "deenge": ("Deenge Portal", "django"),
+    "wuerth-converter": ("Würth Converter", "valhalla"),
+    "csa": ("CSA Portal", "django"),
+    "angular-django-scaffold": ("Angular-Django Scaffold", "django"),
     "postgres": ("PostgreSQL", "postgres"),
     "coder": ("Coder", "coder"),
     "traefik": ("Traefik", "traefik"),
@@ -252,25 +267,33 @@ def rebuild_service_groups(
             summary_line = ""
 
             if vuln_entries:
-                best_vuln = max(
+                sorted_vulns = sorted(
                     vuln_entries,
                     key=lambda v: SEVERITY_RANK.get(str(v.get("Severity") or "").upper(), 0),
+                    reverse=True,
                 )
+                best_vuln = sorted_vulns[0]
                 highest_cve_id = str(best_vuln.get("VulnerabilityID") or "")
                 highest_severity = str(best_vuln.get("Severity") or "").upper()
-                summary_line = str(
+                best_title = str(
                     best_vuln.get("Title")
                     or best_vuln.get("Description")
                     or f"Sicherheitsupdate auf {target_version}"
                 )
+                if len(sorted_vulns) > 1:
+                    summary_line = f"{len(sorted_vulns)} behebbare CVEs · {best_title}"
+                else:
+                    summary_line = best_title
                 category = "action_required"
             else:
+                sorted_vulns = []
                 category = "ready_to_rollout"
-                summary_line = (
-                    f"Neue Version {target_version} bereit zum Ausrollen"
-                    if target_version
-                    else "Update bereit zum Ausrollen"
-                )
+                if pr_entries:
+                    summary_line = f"{len(pr_entries)} offene Update-PRs bereit zum Ausrollen"
+                elif target_version:
+                    summary_line = f"Neue Version {target_version} bereit zum Ausrollen"
+                else:
+                    summary_line = "Update bereit zum Ausrollen"
 
             sg = ServiceGroup.objects.create(
                 slug=slug,
@@ -281,18 +304,18 @@ def rebuild_service_groups(
                 target_version=target_version,
                 highest_cve_id=highest_cve_id,
                 highest_severity=highest_severity,
-                summary_line=summary_line,
+                summary_line=summary_line[:250],
             )
 
-            for vuln in vuln_entries:
+            for vuln in sorted_vulns[:25]:
                 VulnerabilityFinding.objects.create(
                     service_group=sg,
-                    vulnerability_id=str(vuln.get("VulnerabilityID") or ""),
-                    severity=str(vuln.get("Severity") or "").upper(),
-                    status=str(vuln.get("Status") or "fixed"),
-                    fixed_version=str(vuln.get("FixedVersion") or ""),
-                    title=str(vuln.get("Title") or ""),
-                    package_name=str(vuln.get("PkgName") or ""),
+                    vulnerability_id=str(vuln.get("VulnerabilityID") or "")[:120],
+                    severity=str(vuln.get("Severity") or "").upper()[:32],
+                    status=str(vuln.get("Status") or "fixed")[:32],
+                    fixed_version=str(vuln.get("FixedVersion") or "")[:120],
+                    title=str(vuln.get("Title") or "")[:250],
+                    package_name=str(vuln.get("PkgName") or "")[:120],
                 )
 
             for pr in pr_entries:

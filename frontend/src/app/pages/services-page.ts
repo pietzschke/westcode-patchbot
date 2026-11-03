@@ -1,4 +1,4 @@
-import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { Component, OnInit, computed, effect, inject, signal } from '@angular/core';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
 import { of, switchMap } from 'rxjs';
 import { getLogoSvg } from '../core/logos';
@@ -125,31 +125,67 @@ import { PatchbotApi, RolloutPlanDto, ServiceGroupDto } from '../core/patchbot-a
                   <div class="plan-meta" id="p-meta">
                     Update {{ selected.current_version_summary }} → {{ selected.target_version }}
                     @if (selected.highest_cve_id) {
-                      · {{ selected.highest_cve_id }}
+                      · <strong style="color:var(--salmon-700);">{{ selected.highest_cve_id }}</strong>
                     }
                   </div>
                 </div>
               </div>
 
+              @if (selected.vulnerabilities && selected.vulnerabilities.length > 0) {
+                <div class="plan-block" id="p-vuln-block">
+                  <div class="plan-block-title">
+                    <span>Gefundene Sicherheitslücken (Trivy)</span>
+                    <span style="color:var(--salmon-700);">
+                      {{ selected.vulnerabilities.length }} mit Fix
+                    </span>
+                  </div>
+                  @for (vuln of selected.vulnerabilities.slice(0, 6); track vuln.vulnerability_id + vuln.package_name) {
+                    <div class="plan-item" style="align-items:flex-start;">
+                      <div style="max-width:72%;">
+                        <strong style="color:var(--salmon-700);">{{ vuln.vulnerability_id }}</strong>
+                        <span class="plan-item-sub" style="display:block;">
+                          {{ vuln.package_name }} · {{ vuln.title }}
+                        </span>
+                      </div>
+                      <span style="font-size:11px;font-weight:700;color:var(--neutral-700);white-space:nowrap;">
+                        Fix: {{ vuln.fixed_version }}
+                      </span>
+                    </div>
+                  }
+                </div>
+              }
+
               <div class="plan-block" id="p-git-block">
                 <div class="plan-block-title">
-                  <span>1. Git-Standorte / Renovate PR</span>
+                  <span>1. Git-Standorte / Renovate &amp; Dependabot PRs</span>
                   <span style="color:var(--success);">
-                    {{ selected.git_targets.length }} Standorte
+                    {{ selected.git_targets.length }} PRs
                   </span>
                 </div>
-                @for (gt of selected.git_targets; track gt.repo_full_name + gt.file_path) {
+                @for (gt of selected.git_targets.slice(0, 8); track gt.repo_full_name + gt.file_path + gt.pr_number) {
                   <div class="plan-item">
                     <div>
                       <strong>{{ gt.repo_full_name }}</strong>
-                      <span class="plan-item-sub">
+                      <span class="plan-item-sub" style="display:block;">
                         {{ gt.file_path }}
                         @if (gt.pr_number) {
-                          · Renovate PR #{{ gt.pr_number }}
+                          ·
+                          @if (gt.pr_url) {
+                            <a
+                              [href]="gt.pr_url"
+                              target="_blank"
+                              rel="noopener"
+                              style="color:var(--bluefly-600);text-decoration:none;font-weight:600;"
+                            >
+                              PR #{{ gt.pr_number }} ↗
+                            </a>
+                          } @else {
+                            Renovate PR #{{ gt.pr_number }}
+                          }
                         }
                       </span>
                     </div>
-                    <span style="color:var(--bluefly-500);font-weight:700;">
+                    <span style="color:var(--bluefly-500);font-weight:700;white-space:nowrap;">
                       {{ gt.ci_status === 'success' ? 'Bereit zum Merge' : gt.ci_status }}
                     </span>
                   </div>
@@ -169,13 +205,21 @@ import { PatchbotApi, RolloutPlanDto, ServiceGroupDto } from '../core/patchbot-a
                   <div class="plan-item">
                     <div>
                       <strong>{{ ht.hostname }}</strong>
-                      <span class="plan-item-sub">
-                        {{ ht.working_dir }} · {{ ht.git_clean ? 'git clean' : 'git dirty' }}
+                      <span class="plan-item-sub" style="display:block;">
+                        {{ ht.working_dir || ht.target_type }} ·
+                        @if (ht.target_type === 'ecr_app') {
+                          CircleCI Deploy nach Merge ·
+                        }
+                        {{ ht.git_clean !== false ? 'git clean' : 'git dirty' }}
                       </span>
                     </div>
-                    <span>
+                    <span style="white-space:nowrap;">
                       {{ ht.running_version }} → <strong>{{ ht.target_version }}</strong>
                     </span>
+                  </div>
+                } @empty {
+                  <div class="plan-item">
+                    <span class="plan-item-sub">Reines Repository-/Template-Update (kein direkter Host)</span>
                   </div>
                 }
               </div>
@@ -189,6 +233,21 @@ import { PatchbotApi, RolloutPlanDto, ServiceGroupDto } from '../core/patchbot-a
                   @if (plan.block_reason) {
                     <div class="plan-item">
                       <span style="color:var(--salmon-700);">{{ plan.block_reason }}</span>
+                    </div>
+                  }
+                  @for (step of plan.steps; track step.id) {
+                    <div class="plan-item">
+                      <div>
+                        <strong>#{{ step.order }}</strong>
+                        <span class="plan-item-sub">
+                          @if (step.step_type === 'github_merge') {
+                            GitHub Merge PR #{{ step.pr_number }} ({{ step.repo_full_name }})
+                          } @else {
+                            {{ step.hostname }} ({{ step.working_dir || step.step_type }})
+                          }
+                        </span>
+                      </div>
+                      <span style="font-weight:700;">{{ step.status }}</span>
                     </div>
                   }
                 </div>
@@ -248,7 +307,20 @@ export class ServicesPage implements OnInit {
     return list.find((s) => s.slug === slug) ?? list[0];
   });
 
+  constructor() {
+    effect(() => {
+      const tick = this.api.refreshTick();
+      if (tick > 0) {
+        this.loadServices();
+      }
+    });
+  }
+
   ngOnInit(): void {
+    this.loadServices();
+  }
+
+  loadServices(): void {
     this.api.listServices().subscribe((items) => {
       this.services.set(items);
       if (items.length > 0 && !this.selectedSlug()) {
@@ -267,10 +339,14 @@ export class ServicesPage implements OnInit {
   }
 
   allHostsClean(service: ServiceGroupDto): boolean {
-    return service.host_targets.every((ht) => ht.git_clean);
+    return service.host_targets.every((ht) => ht.git_clean !== false);
   }
 
   preparePlanOnly(service: ServiceGroupDto): void {
+    const firstWithUrl = service.git_targets.find((gt) => !!gt.pr_url);
+    if (firstWithUrl?.pr_url && typeof window !== 'undefined' && typeof window.open === 'function') {
+      window.open(firstWithUrl.pr_url, '_blank', 'noopener');
+    }
     this.api.createServicePlan(service.slug).subscribe((plan) => {
       this.activePlan.set(plan);
     });

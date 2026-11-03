@@ -1,6 +1,6 @@
-import { Injectable, inject } from '@angular/core';
+import { Injectable, inject, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { Observable } from 'rxjs';
+import { Observable, tap } from 'rxjs';
 
 export interface GitTargetDto {
   id?: number;
@@ -21,7 +21,7 @@ export interface HostTargetDto {
   compose_service?: string;
   running_version: string;
   target_version: string;
-  git_clean: boolean;
+  git_clean: boolean | null;
 }
 
 export interface VulnerabilityDto {
@@ -71,10 +71,30 @@ export interface RolloutPlanDto {
   id: string;
   service_group: string;
   service_slug: string;
+  service_display_name?: string;
+  service_logo_key?: string;
   status: string;
   block_reason: string;
   created_at: string;
   steps: RolloutStepDto[];
+}
+
+export interface HostContainerDto {
+  name: string;
+  image_tag: string;
+  oci_title?: string;
+  oci_revision?: string;
+  working_dir?: string;
+  compose_service?: string;
+  git_clean?: boolean | null;
+  status?: string;
+}
+
+export interface HostPackageDto {
+  name: string;
+  installed_version: string;
+  candidate_version: string;
+  is_security_update: boolean;
 }
 
 export interface HostDto {
@@ -84,7 +104,7 @@ export interface HostDto {
   provider: string;
   stack_name?: string;
   stack?: string;
-  declared_image?: string;
+  declared_image?: string | null;
   os_distro?: string;
   distro?: string;
   os_version?: string;
@@ -92,16 +112,42 @@ export interface HostDto {
   is_eol?: boolean;
   reboot_required?: boolean;
   last_seen_at?: string | null;
+  has_agent_token?: boolean;
   pending_apt_count?: number;
   actionable_packages_count?: number;
   security_apt_count?: number;
   container_count?: number;
   containers_count?: number;
+  containers?: HostContainerDto[];
+  packages?: HostPackageDto[];
+}
+
+export interface HostTokenResponseDto {
+  slug: string;
+  hostname: string;
+  token: string;
+  install_command: string;
+  host: HostDto;
+}
+
+export interface HostSshProbeResponseDto {
+  detail: string;
+  host: HostDto;
+}
+
+export interface LiveSyncSummaryDto {
+  status: string;
+  hosts_count: number;
+  services_count: number;
+  prs_count: number;
+  vulns_count: number;
+  synced_at: string;
 }
 
 @Injectable({ providedIn: 'root' })
 export class PatchbotApi {
   private readonly http = inject(HttpClient);
+  readonly refreshTick = signal<number>(0);
 
   listServices(): Observable<ServiceGroupDto[]> {
     return this.http.get<ServiceGroupDto[]>('/api/services/');
@@ -115,7 +161,30 @@ export class PatchbotApi {
     return this.http.post<RolloutPlanDto>(`/api/plans/${encodeURIComponent(planId)}/execute/`, {});
   }
 
+  listPlans(): Observable<RolloutPlanDto[]> {
+    return this.http.get<RolloutPlanDto[]>('/api/plans/');
+  }
+
   listHosts(): Observable<HostDto[]> {
     return this.http.get<HostDto[]>('/api/hosts/');
+  }
+
+  generateHostToken(slug: string): Observable<HostTokenResponseDto> {
+    return this.http.post<HostTokenResponseDto>(`/api/hosts/${encodeURIComponent(slug)}/token/`, {});
+  }
+
+  probeHostSsh(slug: string): Observable<HostSshProbeResponseDto> {
+    return this.http.post<HostSshProbeResponseDto>(
+      `/api/hosts/${encodeURIComponent(slug)}/ssh-probe/`,
+      {},
+    );
+  }
+
+  triggerLiveSync(): Observable<LiveSyncSummaryDto> {
+    return this.http.post<LiveSyncSummaryDto>('/api/sync/', {}).pipe(
+      tap(() => {
+        this.refreshTick.update((n) => n + 1);
+      }),
+    );
   }
 }

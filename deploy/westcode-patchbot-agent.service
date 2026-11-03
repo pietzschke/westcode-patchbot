@@ -1,0 +1,21 @@
+[Unit]
+Description=Westcode Patchbot Host Agent
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+EnvironmentFile=/etc/westcode-patchbot/agent.env
+ExecStart=/usr/bin/python3 /usr/local/libexec/westcode-patchbot-agent
+Restart=always
+RestartSec=60
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=westcode-patchbot-agent
+PrivateTmp=true
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

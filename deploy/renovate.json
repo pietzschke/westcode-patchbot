@@ -1,0 +1,62 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "timezone": "Europe/Berlin",
+  "dependencyDashboard": true,
+  "enabledManagers": [
+    "poetry",
+    "npm",
+    "dockerfile",
+    "docker-compose",
+    "github-actions",
+    "circleci"
+  ],
+  "hostRules": [
+    {
+      "matchHost": "westcode-533267181938.d.codeartifact.eu-central-1.amazonaws.com",
+      "hostType": "pypi",
+      "username": "aws",
+      "password": "{{ secrets.CODEARTIFACT_AUTH_TOKEN }}"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Group non-major updates to reduce PR noise",
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "pin",
+        "digest"
+      ],
+      "groupName": "non-major dependencies",
+      "groupSlug": "non-major"
+    },
+    {
+      "description": "Isolate major updates into dedicated PRs",
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "groupName": null,
+      "labels": [
+        "dependencies",
+        "major-update"
+      ]
+    },
+    {
+      "description": "Prioritize security updates in separate immediate PRs",
+      "matchCategories": [
+        "security"
+      ],
+      "groupName": null,
+      "schedule": [
+        "at any time"
+      ],
+      "labels": [
+        "security",
+        "dependencies"
+      ]
+    }
+  ]
+}

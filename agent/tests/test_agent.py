@@ -5,6 +5,7 @@ from agent.patchbot_agent import (
     collect_host_inventory,
     dispatch_agent_job,
     execute_compose_update,
+    main,
     parse_apt_simulation,
     run_precheck,
     validate_opt_workdir,
@@ -243,3 +244,64 @@ def test_dispatch_agent_job_enforces_action_enum(tmp_path):
 
     with pytest.raises(ValueError, match="Unsupported action_type"):
         dispatch_agent_job({"action_type": "shell_exec", "payload": {"cmd": "id"}}, runner=fake_runner, allowed_root=opt)
+
+
+def test_main_cli_reports_inventory_polls_next_job_and_posts_result(monkeypatch, tmp_path):
+    opt = tmp_path / "opt"
+    svc = opt / "plausible"
+    svc.mkdir(parents=True)
+    (svc / "compose.yaml").write_text("services:\n  plausible:\n    image: plausible/analytics:v2.1.0\n")
+
+    monkeypatch.setenv("PATCHBOT_URL", "https://patch.westcode.de")
+    monkeypatch.setenv("PATCHBOT_TOKEN", "secret-host-token")
+    monkeypatch.setenv("PATCHBOT_HOSTNAME", "c2.westcode.de")
+    monkeypatch.setenv("PATCHBOT_ALLOWED_ROOT", str(opt))
+
+    monkeypatch.setattr(
+        "agent.patchbot_agent.collect_host_inventory",
+        lambda **kwargs: {
+            "os_distro": "debian",
+            "os_version": "13",
+            "reboot_required": False,
+            "packages": [],
+            "containers": [],
+        },
+    )
+    monkeypatch.setattr("agent.patchbot_agent.default_runner", lambda cmd, cwd=None: (0, "", ""))
+
+    http_calls = []
+
+    def fake_http_json(url, method="GET", token="", payload=None):
+        http_calls.append({"url": url, "method": method, "token": token, "payload": payload})
+        if url.endswith("/api/agent/report/"):
+            return {"status": "ok", "hostname": "c2.westcode.de"}
+        if url.endswith("/api/agent/jobs/next/"):
+            return {
+                "id": "11111111-2222-3333-4444-555555555555",
+                "action_type": "precheck",
+                "payload": {"working_dir": str(svc), "target_image": "plausible/analytics:v2.1.2"},
+            }
+        if url.endswith("/api/agent/jobs/11111111-2222-3333-4444-555555555555/result/"):
+            return {"status": "SUCCEEDED"}
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    monkeypatch.setattr("agent.patchbot_agent._http_json", fake_http_json)
+
+    rc = main([])
+    assert rc == 0
+    assert len(http_calls) == 3
+    assert http_calls[0]["url"] == "https://patch.westcode.de/api/agent/report/"
+    assert http_calls[0]["method"] == "POST"
+    assert http_calls[0]["token"] == "secret-host-token"
+    assert http_calls[0]["payload"]["hostname"] == "c2.westcode.de"
+
+    assert http_calls[1]["url"] == "https://patch.westcode.de/api/agent/jobs/next/"
+    assert http_calls[1]["method"] == "GET"
+
+    assert (
+        http_calls[2]["url"]
+        == "https://patch.westcode.de/api/agent/jobs/11111111-2222-3333-4444-555555555555/result/"
+    )
+    assert http_calls[2]["method"] == "POST"
+    assert http_calls[2]["payload"]["ok"] is True
+

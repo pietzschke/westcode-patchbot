@@ -1,0 +1,93 @@
+# Westcode Patchbot auf patch.westcode.de (liegt auf dem Server unter /opt/patchbot).
+# Geheimnisse stehen in /opt/patchbot/.env (nicht im Repository).
+name: patchbot
+
+x-hardened: &hardened
+  cap_drop:
+    - ALL
+  security_opt:
+    - "no-new-privileges:true"
+
+services:
+  db:
+    <<: *hardened
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: patchbot
+      POSTGRES_USER: patchbot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD fehlt in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U patchbot -d patchbot"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  trivy:
+    <<: *hardened
+    image: aquasec/trivy:latest
+    restart: unless-stopped
+    command: ["server", "--listen", "0.0.0.0:4954"]
+    volumes:
+      - trivy-cache:/root/.cache/
+    healthcheck:
+      test: ["CMD", "trivy", "version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  backend:
+    <<: *hardened
+    image: patchbot-backend
+    pull_policy: never
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://patchbot:${POSTGRES_PASSWORD}@db:5432/patchbot
+      TRIVY_SERVER_URL: http://trivy:4954
+    ports:
+      - "127.0.0.1:8020:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      trivy:
+        condition: service_started
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/services/', timeout=10)",
+        ]
+      interval: 60s
+      timeout: 15s
+      start_period: 30s
+      retries: 3
+
+  renovate:
+    <<: *hardened
+    image: renovate/renovate:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      RENOVATE_CONFIG_FILE: /usr/src/app/renovate.json
+      RENOVATE_PLATFORM: github
+      AWS_REGION: eu-central-1
+      AWS_DEFAULT_REGION: eu-central-1
+      CODEARTIFACT_DOMAIN: westcode
+      CODEARTIFACT_AUTH_TOKEN: ${CODEARTIFACT_AUTH_TOKEN:-}
+    volumes:
+      - ./renovate.json:/usr/src/app/renovate.json:ro
+    entrypoint:
+      [
+        "/bin/sh",
+        "-c",
+        "trap exit TERM; while :; do renovate; sleep 6h & wait $${!}; done",
+      ]
+
+volumes:
+  pgdata:
+  trivy-cache:

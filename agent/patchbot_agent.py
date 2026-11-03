@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
+import socket
 import subprocess
 import time
 from typing import Any, Callable, Tuple
@@ -462,11 +463,19 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Westcode Patchbot stdlib host agent")
     parser.add_argument(
         "--server-url",
-        default=os.environ.get("PATCHBOT_SERVER_URL", "http://127.0.0.1:8000"),
+        "--url",
+        dest="server_url",
+        default=os.environ.get("PATCHBOT_URL")
+        or os.environ.get("PATCHBOT_SERVER_URL", "http://127.0.0.1:8000"),
     )
     parser.add_argument(
         "--token",
-        default=os.environ.get("PATCHBOT_AGENT_TOKEN", ""),
+        default=os.environ.get("PATCHBOT_TOKEN")
+        or os.environ.get("PATCHBOT_AGENT_TOKEN", ""),
+    )
+    parser.add_argument(
+        "--hostname",
+        default=os.environ.get("PATCHBOT_HOSTNAME") or socket.gethostname(),
     )
     parser.add_argument(
         "--allowed-root",
@@ -476,15 +485,16 @@ def main(argv: list[str] | None = None) -> int:
     base = args.server_url.rstrip("/")
     allowed_root = Path(args.allowed_root)
 
-    inventory = collect_host_inventory()
-    _http_json(f"{base}/api/agent/checkin", method="POST", token=args.token, payload=inventory)
+    inventory = collect_host_inventory(runner=default_runner)
+    inventory["hostname"] = args.hostname
+    _http_json(f"{base}/api/agent/report/", method="POST", token=args.token, payload=inventory)
 
-    next_job = _http_json(f"{base}/api/agent/jobs/next", method="GET", token=args.token)
+    next_job = _http_json(f"{base}/api/agent/jobs/next/", method="GET", token=args.token)
     job_id = next_job.get("id") if isinstance(next_job, dict) else None
     if job_id:
-        result = dispatch_agent_job(next_job, allowed_root=allowed_root)
+        result = dispatch_agent_job(next_job, runner=default_runner, allowed_root=allowed_root)
         _http_json(
-            f"{base}/api/agent/jobs/{job_id}/result",
+            f"{base}/api/agent/jobs/{job_id}/result/",
             method="POST",
             token=args.token,
             payload=result,

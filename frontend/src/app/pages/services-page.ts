@@ -1,6 +1,6 @@
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
-import { switchMap } from 'rxjs';
+import { of, switchMap } from 'rxjs';
 import { getLogoSvg } from '../core/logos';
 import { PatchbotApi, RolloutPlanDto, ServiceGroupDto } from '../core/patchbot-api';
 
@@ -279,7 +279,7 @@ export class ServicesPage implements OnInit {
   executeSelectedPlan(service: ServiceGroupDto): void {
     this.api
       .createServicePlan(service.slug)
-      .pipe(switchMap((plan) => this.api.executePlan(plan.id)))
+      .pipe(switchMap((plan) => (plan.status === 'BLOCKED' ? of(plan) : this.api.executePlan(plan.id))))
       .subscribe((executedPlan) => {
         this.activePlan.set(executedPlan);
       });

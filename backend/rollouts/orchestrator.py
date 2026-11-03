@@ -1,6 +1,7 @@
 from collections.abc import Callable
 from typing import Any
 from django.db import transaction
+from alerts.router import AlertTransport, notify_rollout_rollback
 from catalog.models import ServiceGroup
 from fleet.models import AgentJob
 from rollouts.models import RolloutPlan, RolloutStep
@@ -19,6 +20,7 @@ def _dispatch_host_step(step: RolloutStep) -> AgentJob:
         payload: dict[str, Any] = {
             "working_dir": step.working_dir,
             "service": step.compose_service,
+            "target_image": step.target_version,
             "target_version": step.target_version,
         }
     elif step.step_type == "host_apt":
@@ -109,8 +111,10 @@ def start_rollout_plan(
     plan: RolloutPlan,
     github_merger: Callable[[str, int], Any] | None = None,
 ) -> RolloutPlan:
-    if plan.status == "BLOCKED":
-        raise ValueError(f"RolloutPlan {plan.id} is BLOCKED: {plan.block_reason}")
+    if plan.status != "READY":
+        raise ValueError(
+            f"Cannot execute RolloutPlan {plan.id}: status is {plan.status} ({plan.block_reason})"
+        )
 
     merger = github_merger or _default_github_merger
 
@@ -147,10 +151,13 @@ def start_rollout_plan(
         return plan
 
 
-def advance_rollout_on_job_result(job: AgentJob) -> RolloutPlan:
+def advance_rollout_on_job_result(
+    job: AgentJob,
+    transport: AlertTransport | None = None,
+) -> RolloutPlan:
     with transaction.atomic():
         step = (
-            RolloutStep.objects.select_related("plan")
+            RolloutStep.objects.select_related("plan__service_group")
             .filter(agent_job=job)
             .first()
         )
@@ -183,5 +190,13 @@ def advance_rollout_on_job_result(job: AgentJob) -> RolloutPlan:
             plan.steps.filter(status="PENDING").update(status="ABORTED")
             plan.status = "ROLLED_BACK"
             plan.save(update_fields=["status"])
+            try:
+                notify_rollout_rollback(
+                    plan,
+                    logs=job.result_logs or "",
+                    transport=transport,
+                )
+            except Exception:
+                pass
 
         return plan

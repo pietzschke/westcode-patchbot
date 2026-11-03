@@ -158,4 +158,55 @@ describe('ServicesPage', () => {
     expect(el.querySelectorAll('.host-row').length).toBe(1);
     expect(el.querySelector('.badge-eol')?.textContent).toContain('EOL');
   });
+
+  it('surfaces BLOCKED rollout plans without calling /execute/ and renders the block reason', () => {
+    TestBed.configureTestingModule({
+      imports: [ServicesPage],
+      providers: [provideHttpClient(), provideHttpClientTesting()],
+    });
+    const httpMock = TestBed.inject(HttpTestingController);
+    const fixture = TestBed.createComponent(ServicesPage);
+    fixture.detectChanges();
+
+    httpMock.expectOne('/api/services/').flush([
+      {
+        slug: 'plausible',
+        display_name: 'Plausible Analytics',
+        logo_key: 'plausible',
+        category: 'action_required',
+        current_version_summary: '2.1.0',
+        target_version: '2.1.2',
+        highest_cve_id: 'CVE-2026-3104',
+        summary_line: 'Auth-Bypass im Klick-Tracking behoben',
+        git_targets: [],
+        host_targets: [
+          { hostname: 'c2.westcode.de', working_dir: '/opt/plausible', running_version: '2.1.0', target_version: '2.1.2', git_clean: false },
+        ],
+      },
+    ]);
+    fixture.detectChanges();
+
+    const el: HTMLElement = fixture.nativeElement;
+    const execBtn = el.querySelector<HTMLButtonElement>('#execute-plan-btn')!;
+    execBtn.click();
+
+    const planReq = httpMock.expectOne('/api/services/plausible/plan/');
+    expect(planReq.request.method).toBe('POST');
+    planReq.flush({
+      id: 'plan-blocked-99',
+      service_group: 'plausible',
+      service_slug: 'plausible',
+      status: 'BLOCKED',
+      block_reason: 'Lokale Git-Änderungen (dirty working tree) auf c2.westcode.de (/opt/plausible)',
+      created_at: '2026-11-03T16:00:00Z',
+      steps: [],
+    });
+
+    httpMock.expectNone('/api/plans/plan-blocked-99/execute/');
+    fixture.detectChanges();
+
+    const statusBlock = el.querySelector('#p-status-block')?.textContent ?? '';
+    expect(statusBlock).toContain('BLOCKED');
+    expect(statusBlock).toContain('dirty working tree');
+  });
 });

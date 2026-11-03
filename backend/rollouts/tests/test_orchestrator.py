@@ -267,3 +267,91 @@ def test_apt_rollout_plan_creates_host_apt_steps_and_aborts_on_failed(db):
     assert steps[0].status == "ROLLED_BACK"
     assert steps[1].status == "ABORTED"
 
+
+@pytest.mark.django_db
+def test_start_rollout_plan_job_dispatches_into_patchbot_agent_and_rewrites_compose(
+    plausible_group, tmp_path
+):
+    import json
+    from agent.patchbot_agent import dispatch_agent_job
+
+    opt = tmp_path / "opt"
+    svc = opt / "plausible"
+    svc.mkdir(parents=True)
+    compose_file = svc / "compose.yaml"
+    compose_file.write_text("services:\n  plausible:\n    image: plausible/analytics:v2.1.0\n")
+
+    for ht in plausible_group.host_targets.all():
+        ht.working_dir = str(svc)
+        ht.save(update_fields=["working_dir"])
+
+    plan = create_rollout_plan(plausible_group)
+    start_rollout_plan(plan)
+
+    first_step = plan.steps.filter(step_type="host_compose").order_by("order").first()
+    assert first_step is not None
+    job = first_step.agent_job
+    assert job is not None
+    assert job.payload["target_image"] == "2.1.2"
+    assert job.payload["target_version"] == "2.1.2"
+
+    def fake_runner(cmd, cwd=None):
+        if cmd[:3] == ["docker", "compose", "images"]:
+            return (0, "sha256:new222\n", "")
+        if cmd[:3] == ["docker", "compose", "ps"]:
+            return (0, json.dumps({"State": "running", "Health": "healthy"}) + "\n", "")
+        return (0, "", "")
+
+    outcome = dispatch_agent_job(
+        {"id": str(job.id), "action_type": job.action_type, "payload": job.payload},
+        runner=fake_runner,
+        allowed_root=opt,
+    )
+    assert outcome["status"] == "succeeded"
+    assert "image: plausible/analytics:v2.1.2" in compose_file.read_text()
+
+
+@pytest.mark.django_db
+def test_non_ready_plan_cannot_be_executed_and_rollback_triggers_notification(plausible_group):
+    from alerts.models import AlertFingerprint
+
+    class RecordingTransport:
+        def __init__(self):
+            self.slack = []
+            self.tickets = []
+
+        def send_slack(self, text: str):
+            self.slack.append(text)
+
+        def create_zammad_ticket(self, title: str, body: str, group: str = "Infra") -> str:
+            self.tickets.append((title, body, group))
+            return "ZMD-900"
+
+    plan = create_rollout_plan(plausible_group)
+    start_rollout_plan(plan)
+    plan.refresh_from_db()
+    assert plan.status == "RUNNING"
+
+    with pytest.raises(ValueError, match="Cannot execute RolloutPlan"):
+        start_rollout_plan(plan)
+
+    client = APIClient()
+    resp = client.post(f"/api/plans/{plan.id}/execute/")
+    assert resp.status_code == 400
+    assert resp.json()["plan"]["status"] == "RUNNING"
+
+    first_step = plan.steps.filter(step_type="host_compose").order_by("order").first()
+    job1 = first_step.agent_job
+    job1.status = "ROLLED_BACK"
+    job1.result_payload = {"logs": "Container crashloop on startup"}
+    job1.save()
+
+    transport = RecordingTransport()
+    advance_rollout_on_job_result(job1, transport=transport)
+
+    assert len(transport.slack) == 1
+    assert len(transport.tickets) == 1
+    assert "Container crashloop on startup" in transport.tickets[0][1]
+    assert AlertFingerprint.objects.filter(fingerprint=f"rollback:{plan.id}").exists()
+
+

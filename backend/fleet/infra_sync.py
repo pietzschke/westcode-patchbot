@@ -120,20 +120,26 @@ def sync_infra_hosts(infra_root: Path, today: date | None = None) -> list[Host]:
             if not hostname:
                 continue
             declared_image = srv["declared_image"]
-            os_distro, os_version = _parse_distro_version(declared_image)
-            eol = is_distro_eol(os_distro, os_version, today=check_date) if os_distro and os_version else False
+            defaults: dict[str, object] = {
+                "slug": _slugify_hostname(hostname),
+                "provider": provider,
+                "stack_name": stack_name,
+                "declared_image": declared_image,
+            }
+            if declared_image is not None:
+                os_distro, os_version = _parse_distro_version(declared_image)
+                eol = (
+                    is_distro_eol(os_distro, os_version, today=check_date)
+                    if os_distro and os_version
+                    else False
+                )
+                defaults["os_distro"] = os_distro
+                defaults["os_version"] = os_version
+                defaults["is_os_eol"] = eol
 
             Host.objects.update_or_create(
                 hostname=hostname,
-                defaults={
-                    "slug": _slugify_hostname(hostname),
-                    "provider": provider,
-                    "stack_name": stack_name,
-                    "declared_image": declared_image,
-                    "os_distro": os_distro,
-                    "os_version": os_version,
-                    "is_os_eol": eol,
-                },
+                defaults=defaults,
             )
 
     return list(Host.objects.all())

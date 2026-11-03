@@ -77,7 +77,7 @@ class HttpAlertTransport:
         body: str,
         group: str = "Infra",
     ) -> str:
-        if not self.zammad_base_url:
+        if not self.zammad_base_url or not self.zammad_token:
             return ""
         url = f"{self.zammad_base_url}/api/v1/tickets"
         payload = json.dumps(
@@ -164,9 +164,10 @@ def notify_critical_cve(
 
 def notify_rollout_rollback(
     plan: RolloutPlan,
-    logs: str,
-    transport: AlertTransport,
+    logs: str = "",
+    transport: AlertTransport | None = None,
 ) -> bool:
+    active_transport = transport if transport is not None else HttpAlertTransport()
     fingerprint = f"rollback:{plan.id}"
     with transaction.atomic():
         if AlertFingerprint.objects.filter(fingerprint=fingerprint).exists():
@@ -188,8 +189,8 @@ def notify_rollout_rollback(
             f"```{logs[:500]}```"
         )
 
-        transport.send_slack(slack_text)
-        ticket_ref = transport.create_zammad_ticket(title=title, body=body, group="Infra")
+        active_transport.send_slack(slack_text)
+        ticket_ref = active_transport.create_zammad_ticket(title=title, body=body, group="Infra")
 
         AlertFingerprint.objects.create(
             fingerprint=fingerprint,

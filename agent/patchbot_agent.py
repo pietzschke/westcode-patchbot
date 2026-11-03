@@ -25,13 +25,16 @@ _IMAGE_LINE_RE = re.compile(r"^(\s*image:\s*)(\S+)(\s*(?:#.*)?)$", re.MULTILINE)
 
 def default_runner(cmd: list[str], cwd: str | Path | None = None) -> tuple[int, str, str]:
     """Execute a fixed argument vector command without a shell."""
-    proc = subprocess.run(
-        cmd,
-        cwd=str(cwd) if cwd is not None else None,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(cwd) if cwd is not None else None,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        return (127, "", str(exc))
     return (proc.returncode, proc.stdout, proc.stderr)
 
 
@@ -221,22 +224,66 @@ def run_precheck(
     }
 
 
-def _rewrite_compose_image(content: str, target_image: str) -> str:
+def _format_target_image(current_img: str, target_image: str) -> str:
+    """Resolve target_image against current_img, preserving repo and v-prefix on bare version tags."""
+    if "/" not in target_image and ":" not in target_image and "@" not in target_image:
+        if ":" in current_img:
+            repo_part, current_tag = current_img.rsplit(":", 1)
+            if re.match(r"^v\d", current_tag) and re.match(r"^\d", target_image):
+                new_tag = f"v{target_image}"
+            else:
+                new_tag = target_image
+            return f"{repo_part}:{new_tag}"
+        repo_part = current_img.split("@", 1)[0]
+        return f"{repo_part}:{target_image}"
+    return target_image
+
+
+def _rewrite_compose_image(content: str, target_image: str, service: str = "") -> str:
     """Update the image reference in compose YAML content while preserving indentation."""
-    target_repo = target_image.split(":", 1)[0].split("@", 1)[0]
+    if service:
+        service_header_re = re.compile(rf"^(\s*){re.escape(service)}:\s*(?:#.*)?$")
+        lines = content.splitlines(keepends=True)
+        in_service = False
+        service_indent = 0
+        for idx, line in enumerate(lines):
+            raw = line.rstrip("\r\n")
+            eol = line[len(raw) :]
+            stripped = raw.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            leading = len(raw) - len(raw.lstrip(" "))
+            if in_service:
+                if leading <= service_indent:
+                    in_service = False
+                else:
+                    img_match = _IMAGE_LINE_RE.match(raw)
+                    if img_match:
+                        new_img = _format_target_image(img_match.group(2), target_image)
+                        lines[idx] = f"{img_match.group(1)}{new_img}{img_match.group(3)}{eol}"
+                        return "".join(lines)
+            if not in_service:
+                hdr_match = service_header_re.match(raw)
+                if hdr_match:
+                    in_service = True
+                    service_indent = len(hdr_match.group(1))
 
-    def _replace_matching_repo(match: re.Match[str]) -> str:
-        current_img = match.group(2)
-        current_repo = current_img.split(":", 1)[0].split("@", 1)[0]
-        if current_repo == target_repo:
-            return f"{match.group(1)}{target_image}{match.group(3)}"
-        return match.group(0)
+    if "/" in target_image or ":" in target_image or "@" in target_image:
+        target_repo = target_image.split(":", 1)[0].split("@", 1)[0]
 
-    updated = _IMAGE_LINE_RE.sub(_replace_matching_repo, content)
-    if updated != content:
-        return updated
+        def _replace_matching_repo(match: re.Match[str]) -> str:
+            current_img = match.group(2)
+            current_repo = current_img.split(":", 1)[0].split("@", 1)[0]
+            if current_repo == target_repo:
+                return f"{match.group(1)}{target_image}{match.group(3)}"
+            return match.group(0)
+
+        updated = _IMAGE_LINE_RE.sub(_replace_matching_repo, content)
+        if updated != content:
+            return updated
+
     return _IMAGE_LINE_RE.sub(
-        lambda m: f"{m.group(1)}{target_image}{m.group(3)}",
+        lambda m: f"{m.group(1)}{_format_target_image(m.group(2), target_image)}{m.group(3)}",
         content,
         count=1,
     )
@@ -248,6 +295,7 @@ def _poll_health(
     healthcheck_url: str | None,
     runner: RunnerCallable,
     timeout_sec: int,
+    poll_interval_sec: float = 0.2,
 ) -> bool:
     deadline = time.monotonic() + max(timeout_sec, 0)
     while True:
@@ -266,23 +314,23 @@ def _poll_health(
             )
             if rc == 0:
                 stripped = out.strip()
-                if not stripped:
-                    return True
-                try:
-                    first_line = stripped.splitlines()[0]
-                    payload = json.loads(first_line)
-                    if isinstance(payload, list):
-                        payload = payload[0] if payload else {}
-                    state = str(payload.get("State", "running")).lower()
-                    health = str(payload.get("Health", "")).lower()
-                    if state == "running" and health not in {"unhealthy", "starting"}:
-                        return True
-                except json.JSONDecodeError:
-                    return True
+                if stripped:
+                    try:
+                        first_line = stripped.splitlines()[0]
+                        payload = json.loads(first_line)
+                        if isinstance(payload, list):
+                            payload = payload[0] if payload else {}
+                        if isinstance(payload, dict) and payload:
+                            state = str(payload.get("State", "")).lower()
+                            health = str(payload.get("Health", "")).lower()
+                            if state == "running" and health not in {"unhealthy", "starting"}:
+                                return True
+                    except json.JSONDecodeError:
+                        pass
 
         if time.monotonic() >= deadline:
             return False
-        time.sleep(0.2)
+        time.sleep(poll_interval_sec)
 
 
 def execute_compose_update(
@@ -322,7 +370,7 @@ def execute_compose_update(
     )
     prev_image_id = prev_img_out.strip()
 
-    updated_compose = _rewrite_compose_image(original_compose, target_image)
+    updated_compose = _rewrite_compose_image(original_compose, target_image, service=service)
     compose_file.write_text(updated_compose, encoding="utf-8")
 
     pull_rc, _, pull_err = runner(["docker", "compose", "pull", service], cwd=str(workdir))
@@ -390,18 +438,24 @@ def dispatch_agent_job(
     payload = job.get("payload") or {}
 
     if action_type == "precheck":
+        target_image = str(payload.get("target_image") or payload.get("target_version") or "").strip()
+        if not target_image:
+            raise ValueError("target_image or target_version is required")
         return run_precheck(
             working_dir=str(payload["working_dir"]),
-            target_image=str(payload["target_image"]),
+            target_image=target_image,
             runner=active_runner,
             allowed_root=allowed_root,
         )
 
     if action_type == "compose_update":
+        target_image = str(payload.get("target_image") or payload.get("target_version") or "").strip()
+        if not target_image:
+            raise ValueError("target_image or target_version is required")
         return execute_compose_update(
             working_dir=str(payload["working_dir"]),
             service=str(payload["service"]),
-            target_image=str(payload["target_image"]),
+            target_image=target_image,
             healthcheck_url=payload.get("healthcheck_url"),
             runner=active_runner,
             allowed_root=allowed_root,
@@ -492,12 +546,19 @@ def main(argv: list[str] | None = None) -> int:
     next_job = _http_json(f"{base}/api/agent/jobs/next/", method="GET", token=args.token)
     job_id = next_job.get("id") if isinstance(next_job, dict) else None
     if job_id:
-        result = dispatch_agent_job(next_job, runner=default_runner, allowed_root=allowed_root)
+        try:
+            outcome = dispatch_agent_job(
+                next_job,
+                runner=default_runner,
+                allowed_root=allowed_root,
+            )
+        except Exception as exc:
+            outcome = {"status": "FAILED", "logs": str(exc)}
         _http_json(
             f"{base}/api/agent/jobs/{job_id}/result/",
             method="POST",
             token=args.token,
-            payload=result,
+            payload=outcome,
         )
     return 0
 

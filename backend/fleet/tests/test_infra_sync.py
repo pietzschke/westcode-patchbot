@@ -34,3 +34,23 @@ def test_is_distro_eol_flags_ubuntu_20_04():
     assert is_distro_eol("ubuntu", "20.04", today=date(2026, 11, 3)) is True
     assert is_distro_eol("ubuntu", "24.04", today=date(2026, 11, 3)) is False
     assert is_distro_eol("debian", "13", today=date(2026, 11, 3)) is False
+
+
+@pytest.mark.django_db
+def test_sync_infra_hosts_preserves_live_reported_os_info_on_null_image_hosts():
+    infra_path = Path("/Users/pietzschke/projects/westcode-infra")
+    sync_infra_hosts(infra_path)
+
+    masteroil = Host.objects.get(stack_name="hetzner-masteroil")
+    assert masteroil.declared_image is None
+    masteroil.os_distro = "ubuntu"
+    masteroil.os_version = "20.04"
+    masteroil.is_os_eol = True
+    masteroil.save(update_fields=["os_distro", "os_version", "is_os_eol"])
+
+    sync_infra_hosts(infra_path)
+    masteroil.refresh_from_db()
+    assert masteroil.declared_image is None
+    assert masteroil.os_distro == "ubuntu"
+    assert masteroil.os_version == "20.04"
+    assert masteroil.is_os_eol is True

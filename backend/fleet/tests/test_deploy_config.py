@@ -11,6 +11,11 @@ def test_deploy_compose_is_hardened_and_renovate_config_valid():
     assert "trivy" in compose["services"]
     assert "backend" in compose["services"]
     assert "renovate" in compose["services"]
+    assert compose["services"]["db"]["user"] == "postgres"
+    assert "POSTGRES_DB" in compose["services"]["backend"]["environment"]
+    assert "POSTGRES_USER" in compose["services"]["backend"]["environment"]
+    assert "POSTGRES_HOST" in compose["services"]["backend"]["environment"]
+    assert "POSTGRES_PORT" in compose["services"]["backend"]["environment"]
     assert compose["services"]["backend"]["cap_drop"] == ["ALL"]
     assert "no-new-privileges:true" in compose["services"]["backend"]["security_opt"]
     assert compose["services"]["trivy"]["cap_drop"] == ["ALL"]

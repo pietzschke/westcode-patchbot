@@ -129,6 +129,7 @@ class AgentNextJobView(APIView):
         with transaction.atomic():
             job = (
                 AgentJob.objects.filter(host=host, status="PENDING")
+                .select_for_update()
                 .order_by("created_at", "id")
                 .first()
             )

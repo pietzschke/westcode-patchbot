@@ -163,9 +163,14 @@ class RolloutPlanExecuteView(APIView):
 
     def post(self, request: Request, plan_id: UUID) -> Response:
         plan = get_object_or_404(RolloutPlan.objects.select_related("service_group"), id=plan_id)
-        if plan.status == "BLOCKED":
+        if plan.status != "READY":
+            detail = (
+                plan.block_reason
+                if plan.block_reason
+                else f"Cannot execute RolloutPlan {plan.id}: status is {plan.status}"
+            )
             return Response(
-                {"detail": plan.block_reason, "plan": serialize_rollout_plan(plan)},
+                {"detail": detail, "plan": serialize_rollout_plan(plan)},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         updated_plan = start_rollout_plan(plan)

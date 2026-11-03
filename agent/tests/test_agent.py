@@ -305,3 +305,88 @@ def test_main_cli_reports_inventory_polls_next_job_and_posts_result(monkeypatch,
     assert http_calls[2]["method"] == "POST"
     assert http_calls[2]["payload"]["ok"] is True
 
+
+def test_execute_compose_update_rolls_back_when_docker_compose_ps_is_empty(tmp_path):
+    opt = tmp_path / "opt"
+    svc = opt / "plausible"
+    svc.mkdir(parents=True)
+    compose_file = svc / "compose.yaml"
+    compose_file.write_text("services:\n  plausible:\n    image: plausible/analytics:v2.1.0\n")
+
+    def empty_ps_runner(cmd, cwd=None):
+        if cmd[:3] == ["docker", "compose", "images"]:
+            return (0, "sha256:old111\n", "")
+        if cmd[:3] == ["docker", "compose", "ps"]:
+            return (0, "", "")
+        if cmd[:3] == ["docker", "compose", "logs"]:
+            return (0, "container exited immediately\n", "")
+        return (0, "", "")
+
+    result = execute_compose_update(
+        working_dir=str(svc),
+        service="plausible",
+        target_image="2.1.2",
+        healthcheck_url=None,
+        runner=empty_ps_runner,
+        allowed_root=opt,
+        timeout_sec=0,
+    )
+    assert result["status"] == "rolled_back"
+    assert "plausible/analytics:v2.1.0" in compose_file.read_text()
+    assert "container exited immediately" in result["logs"]
+
+
+def test_default_runner_catches_os_error_and_returns_127():
+    from agent.patchbot_agent import default_runner
+
+    rc, out, err = default_runner(["/nonexistent-patchbot-binary-xyz"])
+    assert rc == 127
+    assert out == ""
+    assert err != ""
+
+
+def test_main_catches_dispatch_exception_and_posts_failed_result(monkeypatch, tmp_path):
+    opt = tmp_path / "opt"
+    opt.mkdir(parents=True)
+
+    monkeypatch.setenv("PATCHBOT_URL", "https://patch.westcode.de")
+    monkeypatch.setenv("PATCHBOT_TOKEN", "secret-host-token")
+    monkeypatch.setenv("PATCHBOT_HOSTNAME", "c2.westcode.de")
+    monkeypatch.setenv("PATCHBOT_ALLOWED_ROOT", str(opt))
+
+    monkeypatch.setattr(
+        "agent.patchbot_agent.collect_host_inventory",
+        lambda **kwargs: {
+            "os_distro": "debian",
+            "os_version": "13",
+            "reboot_required": False,
+            "packages": [],
+            "containers": [],
+        },
+    )
+
+    http_calls = []
+
+    def fake_http_json(url, method="GET", token="", payload=None):
+        http_calls.append({"url": url, "method": method, "token": token, "payload": payload})
+        if url.endswith("/api/agent/report/"):
+            return {"status": "ok"}
+        if url.endswith("/api/agent/jobs/next/"):
+            return {
+                "id": "99999999-2222-3333-4444-555555555555",
+                "action_type": "compose_update",
+                "payload": {"working_dir": "/etc/passwd", "service": "web", "target_version": "1.0.0"},
+            }
+        if url.endswith("/api/agent/jobs/99999999-2222-3333-4444-555555555555/result/"):
+            return {"status": "FAILED"}
+        raise AssertionError(f"Unexpected URL: {url}")
+
+    monkeypatch.setattr("agent.patchbot_agent._http_json", fake_http_json)
+
+    rc = main([])
+    assert rc == 0
+    assert len(http_calls) == 3
+    assert http_calls[2]["payload"]["status"] == "FAILED"
+    assert "outside allowed root" in http_calls[2]["payload"]["logs"]
+
+

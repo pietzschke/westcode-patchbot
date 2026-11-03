@@ -69,5 +69,17 @@ class AgentJob(models.Model):
     class Meta:
         ordering = ["created_at"]
 
+    @property
+    def result_logs(self) -> str:
+        if isinstance(self.result_payload, dict):
+            return str(self.result_payload.get("logs", "") or "")
+        return ""
+
+    @result_logs.setter
+    def result_logs(self, value: str) -> None:
+        if not isinstance(self.result_payload, dict):
+            self.result_payload = {}
+        self.result_payload["logs"] = value
+
     def __str__(self) -> str:
         return f"AgentJob({self.id}, {self.host.hostname}, {self.action_type}, {self.status})"

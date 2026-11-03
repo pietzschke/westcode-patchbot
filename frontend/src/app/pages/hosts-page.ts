@@ -13,8 +13,8 @@ import { HostDto, PatchbotApi } from '../core/patchbot-api';
           <h1 class="page-title">Nach Host ({{ hosts().length || 23 }})</h1>
           <p class="page-sub">
             Übersicht der 23 Infrastruktur-Hosts nach Stack, Provider, Betriebssystem und offenen
-            Paket-/Container-Updates. Klicke auf einen Host für Details, SSH-Live-Abfrage oder
-            Agent-Onboarding.
+            Paket-/Container-Updates. Klicke auf einen Host für Details, manuelle Wartungs-Befehle
+            oder Read-Only-Agent-Onboarding (ohne SSH-Zugriff durch den Patchbot).
           </p>
         </div>
       </div>
@@ -91,43 +91,29 @@ import { HostDto, PatchbotApi } from '../core/patchbot-api';
 
               <div class="plan-block">
                 <div class="plan-block-title">
-                  <span>Host-Anbindung &amp; Inventar-Abruf</span>
+                  <span>Manuelle Host-Wartung &amp; Read-Only Inventar-Agent</span>
                   <span>{{ host.has_agent_token ? 'Token aktiv' : 'Kein Token' }}</span>
                 </div>
-                <div style="display:flex;gap:8px;margin-top:6px;">
-                  <button
-                    type="button"
-                    class="btn-secondary btn-standard"
-                    style="margin:0;flex:1;"
-                    [disabled]="isProbing()"
-                    (click)="probeHostSsh(host)"
-                  >
-                    {{ isProbing() ? 'Frage per SSH ab…' : 'Live per SSH abfragen' }}
-                  </button>
-                  <button
-                    type="button"
-                    class="btn-secondary btn-standard"
-                    style="margin:0;flex:1;"
-                    (click)="generateToken(host)"
-                  >
-                    Agent-Token generieren
-                  </button>
+                <div style="font-size:11px;font-weight:700;color:var(--neutral-600);margin-bottom:4px;">
+                  Manuell im eigenen Terminal ausführen (kein SSH vom Patchbot aus):
                 </div>
+                <pre
+                  style="background:var(--neutral-900);color:#fff;padding:10px;border-radius:6px;font-size:11px;overflow-x:auto;margin:0 0 10px 0;line-height:1.45;"
+                ><code>ssh root@{{ host.hostname }} "apt-get update &amp;&amp; DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -y"</code></pre>
 
-                @if (probeMessage()) {
-                  <div
-                    class="plan-item"
-                    style="margin-top:8px;"
-                    [style.color]="probeError() ? 'var(--salmon-700)' : 'var(--success)'"
-                  >
-                    <span>{{ probeMessage() }}</span>
-                  </div>
-                }
+                <button
+                  type="button"
+                  class="btn-secondary btn-standard"
+                  style="margin:0;width:100%;"
+                  (click)="generateToken(host)"
+                >
+                  Read-Only Agent-Token generieren (für periodischen Inventar-Push)
+                </button>
 
                 @if (generatedInstallCmd()) {
                   <div style="margin-top:10px;">
                     <div style="font-size:11px;font-weight:700;color:var(--neutral-600);margin-bottom:4px;">
-                      Auf {{ host.hostname }} ausführen (Token wird einmalig angezeigt):
+                      Auf {{ host.hostname }} ausführen (meldet nur lesend OS, Pakete &amp; Container per HTTPS):
                     </div>
                     <pre
                       style="background:var(--neutral-900);color:#fff;padding:10px;border-radius:6px;font-size:11px;overflow-x:auto;margin:0;"
@@ -157,8 +143,7 @@ import { HostDto, PatchbotApi } from '../core/patchbot-api';
                 } @empty {
                   <div class="plan-item">
                     <span class="plan-item-sub">
-                      Noch keine Container erfasst — klicke oben auf „Live per SSH abfragen“ oder
-                      kopple den Agenten.
+                      Noch keine Container gemeldet — kopple optional den Read-Only-Agenten auf dem Host.
                     </span>
                   </div>
                 }
@@ -200,9 +185,6 @@ export class HostsPage implements OnInit {
 
   readonly hosts = signal<HostDto[]>([]);
   readonly selectedHostname = signal<string>('');
-  readonly isProbing = signal<boolean>(false);
-  readonly probeMessage = signal<string>('');
-  readonly probeError = signal<boolean>(false);
   readonly generatedInstallCmd = signal<string>('');
 
   readonly selectedHost = computed<HostDto | null>(() => {
@@ -238,7 +220,6 @@ export class HostsPage implements OnInit {
 
   selectHost(host: HostDto): void {
     this.selectedHostname.set(host.hostname);
-    this.probeMessage.set('');
     this.generatedInstallCmd.set('');
   }
 
@@ -253,30 +234,6 @@ export class HostsPage implements OnInit {
       this.hosts.update((list) =>
         list.map((h) => (h.hostname === host.hostname ? res.host : h)),
       );
-    });
-  }
-
-  probeHostSsh(host: HostDto): void {
-    const slug = host.slug || host.hostname;
-    this.isProbing.set(true);
-    this.probeMessage.set('');
-    this.probeError.set(false);
-    this.api.probeHostSsh(slug).subscribe({
-      next: (res) => {
-        this.isProbing.set(false);
-        this.probeError.set(false);
-        this.probeMessage.set(res.detail);
-        this.hosts.update((list) =>
-          list.map((h) => (h.hostname === host.hostname ? res.host : h)),
-        );
-      },
-      error: (err) => {
-        this.isProbing.set(false);
-        this.probeError.set(true);
-        this.probeMessage.set(
-          err?.error?.detail || `SSH-Abfrage für ${host.hostname} fehlgeschlagen.`,
-        );
-      },
     });
   }
 }

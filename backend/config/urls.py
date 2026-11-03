@@ -3,7 +3,6 @@ from fleet.api import AgentJobResultView, AgentNextJobView, AgentReportView
 from rollouts.api import (
     HostDetailView,
     HostListView,
-    HostSshProbeView,
     HostTokenGenerateView,
     LiveSyncView,
     RolloutPlanDetailView,
@@ -26,5 +25,4 @@ urlpatterns: list[URLPattern | URLResolver] = [
     path("api/hosts/", HostListView.as_view(), name="host-list"),
     path("api/hosts/<slug:slug>/", HostDetailView.as_view(), name="host-detail"),
     path("api/hosts/<slug:slug>/token/", HostTokenGenerateView.as_view(), name="host-token-generate"),
-    path("api/hosts/<slug:slug>/ssh-probe/", HostSshProbeView.as_view(), name="host-ssh-probe"),
 ]

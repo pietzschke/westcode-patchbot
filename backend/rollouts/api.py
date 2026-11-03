@@ -1,13 +1,9 @@
 import hashlib
-import json
 import secrets
-import subprocess
-from pathlib import Path
 from typing import Any
 from uuid import UUID
 
 from django.shortcuts import get_object_or_404
-from django.utils import timezone
 from rest_framework import status
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -15,8 +11,7 @@ from rest_framework.views import APIView
 
 from catalog.live_sync import run_live_sync
 from catalog.models import ServiceGroup
-from fleet.infra_sync import is_distro_eol
-from fleet.models import Host, HostContainer, HostPackage
+from fleet.models import Host
 from rollouts.models import RolloutPlan
 from rollouts.orchestrator import create_rollout_plan, start_rollout_plan
 
@@ -276,120 +271,6 @@ class HostTokenGenerateView(APIView):
                 "hostname": host.hostname,
                 "token": raw_token,
                 "install_command": install_cmd,
-                "host": serialize_host(host),
-            },
-            status=status.HTTP_200_OK,
-        )
-
-
-class HostSshProbeView(APIView):
-    authentication_classes = []
-    permission_classes = []
-
-    def post(self, request: Request, slug: str) -> Response:
-        host = get_object_or_404(Host, slug=slug)
-        agent_script = Path(__file__).resolve().parents[2] / "agent" / "patchbot_agent.py"
-        if not agent_script.exists():
-            return Response(
-                {"detail": "agent/patchbot_agent.py nicht gefunden."},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-
-        ssh_overrides = {
-            "urh-1": "urh.westcode.network",
-            "linkla.ma": "linklama.westcode.network",
-        }
-        ssh_target = ssh_overrides.get(host.hostname, host.hostname)
-
-        try:
-            proc = subprocess.run(
-                [
-                    "ssh",
-                    "-o",
-                    "BatchMode=yes",
-                    "-o",
-                    "ConnectTimeout=5",
-                    "-o",
-                    "StrictHostKeyChecking=accept-new",
-                    f"root@{ssh_target}",
-                    "python3",
-                    "-",
-                    "--collect-json",
-                ],
-                input=agent_script.read_text(encoding="utf-8"),
-                capture_output=True,
-                text=True,
-                timeout=45,
-                check=False,
-            )
-        except Exception as exc:
-            return Response(
-                {"detail": f"SSH-Abfrage fehlgeschlagen: {exc}"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        if proc.returncode != 0 or not proc.stdout.strip():
-            err_msg = (proc.stderr or "").strip() or "Keine Antwort / SSH-Key nicht freigeschaltet"
-            return Response(
-                {"detail": f"SSH zu root@{host.hostname} fehlgeschlagen: {err_msg}"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        try:
-            payload = json.loads(proc.stdout)
-        except Exception as exc:
-            return Response(
-                {"detail": f"Ungültige JSON-Antwort von {host.hostname}: {exc}"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        os_info = payload.get("os") or {}
-        distro = str(os_info.get("distro") or host.os_distro or "").strip().lower()
-        version = str(os_info.get("version") or host.os_version or "").strip()
-        if distro:
-            host.os_distro = distro
-        if version:
-            host.os_version = version
-        if distro and version:
-            host.is_os_eol = is_distro_eol(distro, version)
-        host.reboot_required = bool(payload.get("reboot_required", os_info.get("reboot_required", False)))
-        host.last_seen_at = timezone.now()
-        host.save()
-
-        HostPackage.objects.filter(host=host).delete()
-        for pkg in payload.get("packages") or []:
-            if isinstance(pkg, dict) and pkg.get("name"):
-                HostPackage.objects.create(
-                    host=host,
-                    name=str(pkg["name"]),
-                    installed_version=str(pkg.get("installed_version") or ""),
-                    candidate_version=str(pkg.get("candidate_version") or ""),
-                    is_security_update=bool(pkg.get("is_security_update", False)),
-                )
-
-        HostContainer.objects.filter(host=host).delete()
-        for c in payload.get("containers") or []:
-            if isinstance(c, dict) and (c.get("name") or c.get("container_id")):
-                HostContainer.objects.create(
-                    host=host,
-                    container_id=str(c.get("container_id") or c.get("name")),
-                    name=str(c.get("name") or c.get("container_id")),
-                    image_tag=str(c.get("image_tag") or ""),
-                    image_id=str(c.get("image_id") or ""),
-                    repo_digests=list(c.get("repo_digests") or []),
-                    oci_title=str(c.get("oci_title") or ""),
-                    oci_revision=str(c.get("oci_revision") or ""),
-                    working_dir=str(c.get("working_dir") or ""),
-                    compose_service=str(c.get("compose_service") or ""),
-                    git_clean=c.get("git_clean"),
-                    status=str(c.get("status") or "running"),
-                )
-
-        run_live_sync(run_trivy=False, run_gh=False)
-        host.refresh_from_db()
-        return Response(
-            {
-                "detail": f"Live-Inventar von {host.hostname} erfolgreich per SSH eingelesen.",
                 "host": serialize_host(host),
             },
             status=status.HTTP_200_OK,

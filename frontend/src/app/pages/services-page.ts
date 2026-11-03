@@ -198,7 +198,7 @@ import { PatchbotApi, RolloutPlanDto, ServiceGroupDto } from '../core/patchbot-a
 
               <div class="plan-block" id="p-host-block">
                 <div class="plan-block-title">
-                  <span>2. Serieller Rollout &amp; Pre-Check ({{ selected.host_targets.length }} Hosts)</span>
+                  <span>2. Betroffene Hosts &amp; Manuelles Runbook ({{ selected.host_targets.length }} Hosts)</span>
                   <span>{{ allHostsClean(selected) ? 'Vorab-Check OK' : 'Git Dirty' }}</span>
                 </div>
                 @for (ht of selected.host_targets; track ht.hostname + ht.working_dir) {
@@ -222,7 +222,25 @@ import { PatchbotApi, RolloutPlanDto, ServiceGroupDto } from '../core/patchbot-a
                     <span class="plan-item-sub">Reines Repository-/Template-Update (kein direkter Host)</span>
                   </div>
                 }
+                @if (selected.host_targets.length > 0) {
+                  <div style="margin-top:8px;">
+                    <div style="font-size:11px;font-weight:700;color:var(--neutral-600);margin-bottom:4px;">
+                      Manuelle Befehle (im eigenen Terminal ausführen):
+                    </div>
+                    <pre
+                      style="background:var(--neutral-900);color:#fff;padding:10px;border-radius:6px;font-size:11px;overflow-x:auto;margin:0;line-height:1.45;"
+                    ><code>{{ buildManualRunbook(selected) }}</code></pre>
+                  </div>
+                }
               </div>
+
+              @if (copiedFeedback()) {
+                <div class="plan-block" style="border-color:var(--success);background:#f0fdf4;">
+                  <span style="font-size:12px;font-weight:600;color:var(--success);">
+                    ✓ Runbook-Befehle in die Zwischenablage kopiert
+                  </span>
+                </div>
+              }
 
               @if (activePlan(); as plan) {
                 <div class="plan-block" id="p-status-block">
@@ -271,9 +289,9 @@ import { PatchbotApi, RolloutPlanDto, ServiceGroupDto } from '../core/patchbot-a
               </button>
 
               <p class="plan-check-note">
-                Rollt nacheinander aus: wartet je Host auf Healthcheck (60 s). Schlägt der erste Host
-                fehl, wird er auf das vorige Image zurückgesetzt und die übrigen Hosts bleiben
-                unberührt.
+                Kein Live-Patching und kein SSH-Zugriff vom Patchbot aus: Der Plan prüft Vorbedingungen
+                (CI-Status &amp; Git-Drift), kopiert das manuelle Runbook in deine Zwischenablage und
+                protokolliert den Vorgang in der Historie.
               </p>
             </div>
           </aside>
@@ -289,6 +307,7 @@ export class ServicesPage implements OnInit {
   readonly services = signal<ServiceGroupDto[]>([]);
   readonly selectedSlug = signal<string>('');
   readonly activePlan = signal<RolloutPlanDto | null>(null);
+  readonly copiedFeedback = signal<boolean>(false);
 
   readonly actionRequiredServices = computed(() =>
     this.services().filter((s) => s.category === 'action_required'),
@@ -332,6 +351,7 @@ export class ServicesPage implements OnInit {
   selectService(service: ServiceGroupDto): void {
     this.selectedSlug.set(service.slug);
     this.activePlan.set(null);
+    this.copiedFeedback.set(false);
   }
 
   renderLogo(key: string, name: string): SafeHtml {
@@ -340,6 +360,21 @@ export class ServicesPage implements OnInit {
 
   allHostsClean(service: ServiceGroupDto): boolean {
     return service.host_targets.every((ht) => ht.git_clean !== false);
+  }
+
+  buildManualRunbook(service: ServiceGroupDto): string {
+    return service.host_targets
+      .map((ht) => {
+        if (service.slug === 'ubuntu-apt' || ht.target_type === 'apt') {
+          return `ssh root@${ht.hostname} "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -y"`;
+        }
+        if (service.slug === 'ubuntu-eol' || ht.target_type === 'os_eol') {
+          return `# ${ht.hostname}: Ubuntu 24.04 LTS Server-Image in westcode-infra aktualisieren & neu ausrollen`;
+        }
+        const dir = ht.working_dir || `/opt/${service.slug}`;
+        return `ssh root@${ht.hostname} "cd ${dir} && git status --porcelain && git pull --ff-only && docker compose pull && docker compose up -d"`;
+      })
+      .join('\n');
   }
 
   preparePlanOnly(service: ServiceGroupDto): void {
@@ -353,6 +388,13 @@ export class ServicesPage implements OnInit {
   }
 
   executeSelectedPlan(service: ServiceGroupDto): void {
+    const runbook = this.buildManualRunbook(service);
+    if (runbook && typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(runbook).then(
+        () => this.copiedFeedback.set(true),
+        () => {},
+      );
+    }
     this.api
       .createServicePlan(service.slug)
       .pipe(switchMap((plan) => (plan.status === 'BLOCKED' ? of(plan) : this.api.executePlan(plan.id))))

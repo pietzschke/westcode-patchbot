@@ -130,11 +130,6 @@ export interface HostTokenResponseDto {
   host: HostDto;
 }
 
-export interface HostSshProbeResponseDto {
-  detail: string;
-  host: HostDto;
-}
-
 export interface LiveSyncSummaryDto {
   status: string;
   hosts_count: number;
@@ -171,13 +166,6 @@ export class PatchbotApi {
 
   generateHostToken(slug: string): Observable<HostTokenResponseDto> {
     return this.http.post<HostTokenResponseDto>(`/api/hosts/${encodeURIComponent(slug)}/token/`, {});
-  }
-
-  probeHostSsh(slug: string): Observable<HostSshProbeResponseDto> {
-    return this.http.post<HostSshProbeResponseDto>(
-      `/api/hosts/${encodeURIComponent(slug)}/ssh-probe/`,
-      {},
-    );
   }
 
   triggerLiveSync(): Observable<LiveSyncSummaryDto> {

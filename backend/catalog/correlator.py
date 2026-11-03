@@ -84,6 +84,7 @@ SERVICE_METADATA: dict[str, tuple[str, str]] = {
     "linklama": ("Linklama Redirects", "traefik"),
     "ses-service-app": ("SES Service-App", "django"),
     "ses-sl-sw-sync": ("SES SelectLine Sync", "postgres"),
+    "ses-shop": ("SES Shop & CDN", "django"),
     "deenge": ("Deenge Portal", "django"),
     "wuerth-converter": ("Würth Converter", "valhalla"),
     "csa": ("CSA Portal", "westcode"),
@@ -99,6 +100,26 @@ SERVICE_METADATA: dict[str, tuple[str, str]] = {
     "django": ("Django", "django"),
     "ubuntu-apt": ("Ubuntu / Debian apt", "ubuntu"),
     "ubuntu-eol": ("Ubuntu EOL-Upgrade", "ubuntu"),
+}
+
+PROJECT_STACK_METADATA: dict[str, tuple[str, str]] = {
+    "hetzner-wuerth": ("Würth (Materialdatenbank & Converter)", "valhalla"),
+    "hetzner-ses-service-app": ("SES Sandmann (Service-App, Sync & Shop)", "django"),
+    "hetzner-westcode-service": ("Westcode Service (Hub, Service-Center & Remote)", "westcode"),
+    "hetzner-container-pool": ("Westcode Container-Pool (c2)", "westcode"),
+    "hetzner-brockhaus-hydrogen": ("Brockhaus Hydrogen", "django"),
+    "hetzner-ackermann": ("Ackermann Ingenieurbüro", "django"),
+    "hetzner-masteroil": ("Masteroil", "django"),
+    "hetzner-projectory": ("Projectory", "westcode"),
+    "hetzner-hildegardis-schule-hagen": ("Hildegardis-Schule Hagen", "django"),
+    "hetzner-linklama": ("Linklama", "traefik"),
+    "hetzner-deenge": ("deenge", "django"),
+    "hetzner-westcode-monitoring": ("Westcode Monitoring (Checkmk)", "ubuntu"),
+    "hetzner-westcode-support": ("Westcode Support (Zammad)", "westcode"),
+    "hetzner-westcode-vpn": ("Westcode VPN", "ubuntu"),
+    "hetzner-wew-homepage": ("WEW Hydrogen Homepage", "ubuntu"),
+    "hetzner-unternehmerrat-hagen": ("Unternehmerrat Hagen", "ubuntu"),
+    "ionos-westcode": ("Westcode Dev (Coder Cloud)", "coder"),
 }
 
 _GENERIC_REPO_SUFFIXES = frozenset({

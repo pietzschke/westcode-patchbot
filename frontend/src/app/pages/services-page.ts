@@ -9,7 +9,7 @@ import { PatchbotApi, RolloutPlanDto, ServiceGroupDto } from '../core/patchbot-a
   standalone: true,
   template: `
     <main class="page">
-      <div class="page-head">
+      <div class="page-head" style="display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;">
         <div>
           <h1 class="page-title">Nach Dienst</h1>
           <p class="page-sub">
@@ -17,94 +17,176 @@ import { PatchbotApi, RolloutPlanDto, ServiceGroupDto } from '../core/patchbot-a
             Klicke auf einen Dienst für den Rollout-Plan.
           </p>
         </div>
+        <div
+          role="tablist"
+          aria-label="Gruppierung"
+          style="display:inline-flex;background:var(--neutral-100);padding:3px;border-radius:8px;border:1px solid var(--neutral-200);gap:2px;"
+        >
+          <span
+            role="tab"
+            [attr.aria-selected]="groupBy() === 'urgency'"
+            style="cursor:pointer;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:600;"
+            [style.background]="groupBy() === 'urgency' ? '#fff' : 'transparent'"
+            [style.color]="groupBy() === 'urgency' ? 'var(--neutral-900)' : 'var(--neutral-600)'"
+            (click)="groupBy.set('urgency')"
+          >
+            Nach Dringlichkeit
+          </span>
+          <span
+            role="tab"
+            [attr.aria-selected]="groupBy() === 'project'"
+            style="cursor:pointer;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:600;"
+            [style.background]="groupBy() === 'project' ? '#fff' : 'transparent'"
+            [style.color]="groupBy() === 'project' ? 'var(--neutral-900)' : 'var(--neutral-600)'"
+            (click)="groupBy.set('project')"
+          >
+            Nach Projekt gruppiert
+          </span>
+        </div>
       </div>
 
       <div class="workspace">
         <div>
-          <section class="group-section" aria-label="Jetzt handeln">
-            <div class="group-head">
-              <span>Jetzt handeln · Sicherheits-Updates mit verfügbarem Fix</span>
-              <span class="group-count">{{ actionRequiredServices().length }} Dienste</span>
-            </div>
-            <ul class="service-list">
-              @for (svc of actionRequiredServices(); track svc.slug) {
-                <li
-                  class="service-row"
-                  [class.selected]="selectedService()?.slug === svc.slug"
-                  [id]="'row-' + svc.slug"
-                  (click)="selectService(svc)"
-                >
-                  <div
-                    class="svc-logo"
-                    [attr.title]="svc.display_name"
-                    [innerHTML]="renderLogo(svc.logo_key, svc.display_name)"
-                  ></div>
-                  <div class="svc-main">
-                    <div class="svc-title">{{ svc.display_name }}</div>
-                    <div class="svc-sub">
-                      @if (svc.highest_cve_id) {
-                        <span class="crit-text">{{ svc.highest_cve_id }}</span> ·
-                      }
-                      {{ svc.summary_line }}
+          @if (groupBy() === 'urgency') {
+            <section class="group-section" aria-label="Jetzt handeln">
+              <div class="group-head">
+                <span>Jetzt handeln · Sicherheits-Updates mit verfügbarem Fix</span>
+                <span class="group-count">{{ actionRequiredServices().length }} Dienste</span>
+              </div>
+              <ul class="service-list">
+                @for (svc of actionRequiredServices(); track svc.slug) {
+                  <li
+                    class="service-row"
+                    [class.selected]="selectedService()?.slug === svc.slug"
+                    [id]="'row-' + svc.slug"
+                    (click)="selectService(svc)"
+                  >
+                    <div
+                      class="svc-logo"
+                      [attr.title]="svc.display_name"
+                      [innerHTML]="renderLogo(svc.logo_key, svc.display_name)"
+                    ></div>
+                    <div class="svc-main">
+                      <div class="svc-title">
+                        {{ svc.display_name }}
+                        @if (svc.projects && svc.projects.length > 0 && svc.slug !== 'ubuntu-apt' && svc.slug !== 'ubuntu-eol') {
+                          <span style="font-size:11px;font-weight:500;color:var(--neutral-500);margin-left:6px;">
+                            · {{ svc.projects[0].display_name }}
+                          </span>
+                        }
+                      </div>
+                      <div class="svc-sub">
+                        @if (svc.highest_cve_id) {
+                          <span class="crit-text">{{ svc.highest_cve_id }}</span> ·
+                        }
+                        {{ svc.summary_line }}
+                      </div>
                     </div>
-                  </div>
-                  <div class="svc-version">
-                    @if (svc.current_version_summary && svc.target_version) {
-                      <span class="old">{{ svc.current_version_summary }}</span> →
-                      <span class="new">{{ svc.target_version }}</span>
-                    } @else {
-                      <span class="new">{{ svc.target_version || svc.current_version_summary }}</span>
-                    }
-                  </div>
-                  <div class="svc-scope">
-                    <span class="dot crit"></span>
-                    <span>{{ svc.git_targets.length }} Git · {{ svc.host_targets.length }} Hosts</span>
-                  </div>
-                  <div class="svc-chevron">›</div>
-                </li>
-              }
-            </ul>
-          </section>
+                    <div class="svc-version">
+                      @if (svc.current_version_summary && svc.target_version) {
+                        <span class="old">{{ svc.current_version_summary }}</span> →
+                        <span class="new">{{ svc.target_version }}</span>
+                      } @else {
+                        <span class="new">{{ svc.target_version || svc.current_version_summary }}</span>
+                      }
+                    </div>
+                    <div class="svc-scope">
+                      <span class="dot crit"></span>
+                      <span>{{ svc.git_targets.length }} Git · {{ svc.host_targets.length }} Hosts</span>
+                    </div>
+                    <div class="svc-chevron">›</div>
+                  </li>
+                }
+              </ul>
+            </section>
 
-          <section class="group-section" aria-label="Bereit zum Ausrollen">
-            <div class="group-head">
-              <span>Bereit zum Ausrollen · Neue Versionen &amp; Host-Updates</span>
-              <span class="group-count">{{ readyServices().length }} Dienste</span>
-            </div>
-            <ul class="service-list">
-              @for (svc of readyServices(); track svc.slug) {
-                <li
-                  class="service-row"
-                  [class.selected]="selectedService()?.slug === svc.slug"
-                  [id]="'row-' + svc.slug"
-                  (click)="selectService(svc)"
-                >
-                  <div
-                    class="svc-logo"
-                    [attr.title]="svc.display_name"
-                    [innerHTML]="renderLogo(svc.logo_key, svc.display_name)"
-                  ></div>
-                  <div class="svc-main">
-                    <div class="svc-title">{{ svc.display_name }}</div>
-                    <div class="svc-sub">{{ svc.summary_line }}</div>
-                  </div>
-                  <div class="svc-version">
-                    @if (svc.current_version_summary && svc.target_version) {
-                      <span class="old">{{ svc.current_version_summary }}</span> →
-                      <span class="new">{{ svc.target_version }}</span>
-                    } @else {
-                      <span class="new">{{ svc.target_version || svc.current_version_summary }}</span>
-                    }
-                  </div>
-                  <div class="svc-scope">
-                    <span class="dot hint"></span>
-                    <span>{{ svc.git_targets.length }} Git · {{ svc.host_targets.length }} Hosts</span>
-                  </div>
-                  <div class="svc-chevron">›</div>
-                </li>
-              }
-            </ul>
-          </section>
+            <section class="group-section" aria-label="Bereit zum Ausrollen">
+              <div class="group-head">
+                <span>Bereit zum Ausrollen · Neue Versionen &amp; Host-Updates</span>
+                <span class="group-count">{{ readyServices().length }} Dienste</span>
+              </div>
+              <ul class="service-list">
+                @for (svc of readyServices(); track svc.slug) {
+                  <li
+                    class="service-row"
+                    [class.selected]="selectedService()?.slug === svc.slug"
+                    [id]="'row-' + svc.slug"
+                    (click)="selectService(svc)"
+                  >
+                    <div
+                      class="svc-logo"
+                      [attr.title]="svc.display_name"
+                      [innerHTML]="renderLogo(svc.logo_key, svc.display_name)"
+                    ></div>
+                    <div class="svc-main">
+                      <div class="svc-title">{{ svc.display_name }}</div>
+                      <div class="svc-sub">{{ svc.summary_line }}</div>
+                    </div>
+                    <div class="svc-version">
+                      @if (svc.current_version_summary && svc.target_version) {
+                        <span class="old">{{ svc.current_version_summary }}</span> →
+                        <span class="new">{{ svc.target_version }}</span>
+                      } @else {
+                        <span class="new">{{ svc.target_version || svc.current_version_summary }}</span>
+                      }
+                    </div>
+                    <div class="svc-scope">
+                      <span class="dot hint"></span>
+                      <span>{{ svc.git_targets.length }} Git · {{ svc.host_targets.length }} Hosts</span>
+                    </div>
+                    <div class="svc-chevron">›</div>
+                  </li>
+                }
+              </ul>
+            </section>
+          } @else {
+            @for (group of servicesByProject(); track group.projectSlug) {
+              <section class="group-section" [attr.aria-label]="group.projectName">
+                <div class="group-head">
+                  <span>{{ group.projectName }} · <span style="font-weight:400;text-transform:none;">{{ group.hostsSummary }}</span></span>
+                  <span class="group-count">{{ group.services.length }} {{ group.services.length === 1 ? 'Dienst' : 'Dienste' }}</span>
+                </div>
+                <ul class="service-list">
+                  @for (svc of group.services; track svc.slug) {
+                    <li
+                      class="service-row"
+                      [class.selected]="selectedService()?.slug === svc.slug"
+                      [id]="'row-' + group.projectSlug + '-' + svc.slug"
+                      (click)="selectService(svc)"
+                    >
+                      <div
+                        class="svc-logo"
+                        [attr.title]="svc.display_name"
+                        [innerHTML]="renderLogo(svc.logo_key, svc.display_name)"
+                      ></div>
+                      <div class="svc-main">
+                        <div class="svc-title">{{ svc.display_name }}</div>
+                        <div class="svc-sub">
+                          @if (svc.highest_cve_id) {
+                            <span class="crit-text">{{ svc.highest_cve_id }}</span> ·
+                          }
+                          {{ svc.summary_line }}
+                        </div>
+                      </div>
+                      <div class="svc-version">
+                        @if (svc.current_version_summary && svc.target_version) {
+                          <span class="old">{{ svc.current_version_summary }}</span> →
+                          <span class="new">{{ svc.target_version }}</span>
+                        } @else {
+                          <span class="new">{{ svc.target_version || svc.current_version_summary }}</span>
+                        }
+                      </div>
+                      <div class="svc-scope">
+                        <span class="dot" [class.crit]="svc.category === 'action_required'" [class.hint]="svc.category !== 'action_required'"></span>
+                        <span>{{ svc.git_targets.length }} Git · {{ svc.host_targets.length }} Hosts</span>
+                      </div>
+                      <div class="svc-chevron">›</div>
+                    </li>
+                  }
+                </ul>
+              </section>
+            }
+          }
         </div>
 
         @if (selectedService(); as selected) {
@@ -308,6 +390,7 @@ export class ServicesPage implements OnInit {
   readonly selectedSlug = signal<string>('');
   readonly activePlan = signal<RolloutPlanDto | null>(null);
   readonly copiedFeedback = signal<boolean>(false);
+  readonly groupBy = signal<'urgency' | 'project'>('urgency');
 
   readonly actionRequiredServices = computed(() =>
     this.services().filter((s) => s.category === 'action_required'),
@@ -316,6 +399,62 @@ export class ServicesPage implements OnInit {
   readonly readyServices = computed(() =>
     this.services().filter((s) => s.category !== 'action_required'),
   );
+
+  readonly servicesByProject = computed(() => {
+    const groupsMap = new Map<
+      string,
+      { projectSlug: string; projectName: string; hosts: Set<string>; services: ServiceGroupDto[] }
+    >();
+    for (const svc of this.services()) {
+      if (svc.slug === 'ubuntu-apt' || svc.slug === 'ubuntu-eol') {
+        const key = 'system-fleet';
+        if (!groupsMap.has(key)) {
+          groupsMap.set(key, {
+            projectSlug: key,
+            projectName: 'Flottenweite Betriebssystem-Updates',
+            hosts: new Set(),
+            services: [],
+          });
+        }
+        const entry = groupsMap.get(key)!;
+        for (const ht of svc.host_targets) {
+          entry.hosts.add(ht.hostname);
+        }
+        entry.services.push(svc);
+        continue;
+      }
+
+      const projList =
+        svc.projects && svc.projects.length > 0
+          ? svc.projects
+          : [{ slug: 'westcode-shared', display_name: 'Übergreifende Templates & Repos' }];
+
+      for (const p of projList) {
+        if (!groupsMap.has(p.slug)) {
+          groupsMap.set(p.slug, {
+            projectSlug: p.slug,
+            projectName: p.display_name,
+            hosts: new Set(),
+            services: [],
+          });
+        }
+        const entry = groupsMap.get(p.slug)!;
+        for (const ht of svc.host_targets) {
+          entry.hosts.add(ht.hostname);
+        }
+        entry.services.push(svc);
+      }
+    }
+
+    return Array.from(groupsMap.values())
+      .map((g) => ({
+        projectSlug: g.projectSlug,
+        projectName: g.projectName,
+        hostsSummary: g.hosts.size > 0 ? Array.from(g.hosts).join(', ') : 'GitHub Repository',
+        services: g.services,
+      }))
+      .sort((a, b) => b.services.length - a.services.length || a.projectName.localeCompare(b.projectName));
+  });
 
   readonly selectedService = computed<ServiceGroupDto | null>(() => {
     const list = this.services();

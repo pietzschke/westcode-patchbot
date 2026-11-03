@@ -9,6 +9,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from catalog.correlator import PROJECT_STACK_METADATA
 from catalog.live_sync import run_live_sync
 from catalog.models import ServiceGroup
 from fleet.models import Host
@@ -16,7 +17,24 @@ from rollouts.models import RolloutPlan
 from rollouts.orchestrator import create_rollout_plan, start_rollout_plan
 
 
+def _project_display_name_and_logo(stack_name: str) -> tuple[str, str]:
+    if stack_name in PROJECT_STACK_METADATA:
+        return PROJECT_STACK_METADATA[stack_name]
+    cleaned = stack_name.removeprefix("hetzner-").replace("-", " ").title()
+    return (cleaned or "Infrastruktur", "westcode")
+
+
 def serialize_service_group(sg: ServiceGroup) -> dict[str, Any]:
+    host_targets_qs = list(sg.host_targets.select_related("host").all())
+    seen_stacks: set[str] = set()
+    projects: list[dict[str, str]] = []
+    for ht in host_targets_qs:
+        st = ht.host.stack_name
+        if st and st not in seen_stacks:
+            seen_stacks.add(st)
+            p_name, p_logo = _project_display_name_and_logo(st)
+            projects.append({"slug": st, "display_name": p_name, "logo_key": p_logo})
+
     return {
         "id": sg.id,
         "slug": sg.slug,
@@ -28,6 +46,7 @@ def serialize_service_group(sg: ServiceGroup) -> dict[str, Any]:
         "highest_cve_id": sg.highest_cve_id,
         "highest_severity": sg.highest_severity,
         "summary_line": sg.summary_line,
+        "projects": projects,
         "git_targets": [
             {
                 "id": gt.id,
@@ -45,6 +64,8 @@ def serialize_service_group(sg: ServiceGroup) -> dict[str, Any]:
                 "id": ht.id,
                 "host_slug": ht.host.slug,
                 "hostname": ht.host.hostname,
+                "stack_name": ht.host.stack_name,
+                "project_name": _project_display_name_and_logo(ht.host.stack_name)[0],
                 "target_type": ht.target_type,
                 "working_dir": ht.working_dir,
                 "compose_service": ht.compose_service,
@@ -52,7 +73,7 @@ def serialize_service_group(sg: ServiceGroup) -> dict[str, Any]:
                 "target_version": ht.target_version,
                 "git_clean": ht.git_clean,
             }
-            for ht in sg.host_targets.select_related("host").all()
+            for ht in host_targets_qs
         ],
         "vulnerabilities": [
             {
@@ -275,6 +296,103 @@ class HostTokenGenerateView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class ProjectListView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def get(self, request: Request) -> Response:
+        hosts = list(Host.objects.prefetch_related("packages", "containers").all())
+        groups = list(
+            ServiceGroup.objects.exclude(slug__in=["ubuntu-apt", "ubuntu-eol"])
+            .prefetch_related("git_targets", "host_targets__host", "vulnerabilities")
+            .all()
+        )
+
+        hosts_by_stack: dict[str, list[Host]] = {}
+        for h in hosts:
+            hosts_by_stack.setdefault(h.stack_name or "default", []).append(h)
+
+        services_by_stack: dict[str, list[ServiceGroup]] = {}
+        for sg in groups:
+            stack_names = {
+                ht.host.stack_name
+                for ht in sg.host_targets.all()
+                if ht.host and ht.host.stack_name
+            }
+            for st in stack_names:
+                services_by_stack.setdefault(st, []).append(sg)
+
+        all_stacks = sorted(set(hosts_by_stack.keys()) | set(services_by_stack.keys()))
+        result: list[dict[str, Any]] = []
+
+        for stack_name in all_stacks:
+            stack_hosts = hosts_by_stack.get(stack_name, [])
+            stack_services = services_by_stack.get(stack_name, [])
+            display_name, logo_key = _project_display_name_and_logo(stack_name)
+
+            serialized_hosts = [serialize_host(h) for h in stack_hosts]
+            serialized_services = [serialize_service_group(sg) for sg in stack_services]
+
+            cves_count = sum(len(s["vulnerabilities"]) for s in serialized_services)
+            prs_count = sum(len(s["git_targets"]) for s in serialized_services)
+            pending_apt_count = sum(h["pending_apt_count"] for h in serialized_hosts)
+            security_apt_count = sum(h["security_apt_count"] for h in serialized_hosts)
+            has_eol_host = any(h["is_os_eol"] for h in serialized_hosts)
+            has_reboot_required = any(h["reboot_required"] for h in serialized_hosts)
+            has_git_dirty = any(
+                ht["git_clean"] is False
+                for s in serialized_services
+                for ht in s["host_targets"]
+                if ht.get("stack_name") == stack_name
+            )
+
+            is_urgent = (
+                cves_count > 0
+                or has_eol_host
+                or security_apt_count > 0
+                or any(s["category"] == "action_required" for s in serialized_services)
+            )
+            category = "action_required" if is_urgent else "ready_to_rollout"
+
+            host_names = ", ".join(h["hostname"] for h in serialized_hosts)
+            svc_names = ", ".join(s["display_name"] for s in serialized_services)
+            summary_parts = []
+            if svc_names:
+                summary_parts.append(f"Dienste: {svc_names}")
+            if host_names:
+                summary_parts.append(f"Hosts: {host_names}")
+            summary_line = " · ".join(summary_parts)
+
+            result.append(
+                {
+                    "slug": stack_name,
+                    "display_name": display_name,
+                    "logo_key": logo_key,
+                    "category": category,
+                    "summary_line": summary_line,
+                    "cves_count": cves_count,
+                    "prs_count": prs_count,
+                    "pending_apt_count": pending_apt_count,
+                    "security_apt_count": security_apt_count,
+                    "has_eol_host": has_eol_host,
+                    "has_reboot_required": has_reboot_required,
+                    "has_git_dirty": has_git_dirty,
+                    "hosts": serialized_hosts,
+                    "services": serialized_services,
+                }
+            )
+
+        result.sort(
+            key=lambda p: (
+                0 if p["category"] == "action_required" else 1,
+                -len(p["services"]),
+                -p["cves_count"],
+                p["display_name"],
+            )
+        )
+        return Response(result, status=status.HTTP_200_OK)
 
 
 class LiveSyncView(APIView):

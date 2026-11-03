@@ -43,6 +43,9 @@ import { PatchbotApi } from './core/patchbot-api';
         >
           Nach Dienst
         </a>
+        <a class="nav-link" routerLink="/projects" routerLinkActive="active">
+          Nach Projekt
+        </a>
         <a class="nav-link" routerLink="/hosts" routerLinkActive="active">
           Nach Host (23)
         </a>

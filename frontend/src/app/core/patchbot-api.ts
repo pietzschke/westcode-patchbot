@@ -34,6 +34,12 @@ export interface VulnerabilityDto {
   package_name: string;
 }
 
+export interface ProjectRefDto {
+  slug: string;
+  display_name: string;
+  logo_key?: string;
+}
+
 export interface ServiceGroupDto {
   id?: number;
   slug: string;
@@ -45,9 +51,27 @@ export interface ServiceGroupDto {
   highest_cve_id?: string;
   highest_severity?: string;
   summary_line: string;
+  projects?: ProjectRefDto[];
   git_targets: GitTargetDto[];
   host_targets: HostTargetDto[];
   vulnerabilities?: VulnerabilityDto[];
+}
+
+export interface ProjectDto {
+  slug: string;
+  display_name: string;
+  logo_key: string;
+  category: 'action_required' | 'ready_to_rollout' | string;
+  summary_line: string;
+  cves_count: number;
+  prs_count: number;
+  pending_apt_count: number;
+  security_apt_count: number;
+  has_eol_host: boolean;
+  has_reboot_required: boolean;
+  has_git_dirty: boolean;
+  hosts: HostDto[];
+  services: ServiceGroupDto[];
 }
 
 export interface RolloutStepDto {
@@ -146,6 +170,10 @@ export class PatchbotApi {
 
   listServices(): Observable<ServiceGroupDto[]> {
     return this.http.get<ServiceGroupDto[]>('/api/services/');
+  }
+
+  listProjects(): Observable<ProjectDto[]> {
+    return this.http.get<ProjectDto[]>('/api/projects/');
   }
 
   createServicePlan(slug: string): Observable<RolloutPlanDto> {

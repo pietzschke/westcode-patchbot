@@ -307,7 +307,7 @@ def rebuild_service_groups(
                 )
 
             for container, _, running_ver in container_entries:
-                target_type = "ecr_app" if _is_ecr_container(container) and not container.working_dir else "compose"
+                target_type = "ecr_app" if _is_ecr_container(container) else "compose"
                 HostTarget.objects.create(
                     service_group=sg,
                     host=container.host,

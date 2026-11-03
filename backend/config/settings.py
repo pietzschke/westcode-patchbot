@@ -13,6 +13,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "fleet",
     "catalog",
+    "rollouts",
 ]
 
 MIDDLEWARE = [

@@ -195,6 +195,15 @@ class AgentJobResultView(APIView):
         job.result_payload = result_payload
         job.save(update_fields=["status", "result_payload"])
 
+        try:
+            has_rollout_step = hasattr(job, "rollout_step") and job.rollout_step is not None
+        except Exception:
+            has_rollout_step = False
+        if has_rollout_step:
+            from rollouts.orchestrator import advance_rollout_on_job_result
+
+            advance_rollout_on_job_result(job)
+
         return Response(
             {
                 "id": str(job.id),

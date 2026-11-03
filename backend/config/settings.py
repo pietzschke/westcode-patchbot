@@ -14,6 +14,7 @@ INSTALLED_APPS = [
     "fleet",
     "catalog",
     "rollouts",
+    "alerts",
 ]
 
 MIDDLEWARE = [

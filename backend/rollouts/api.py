@@ -295,6 +295,12 @@ class HostSshProbeView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+        ssh_overrides = {
+            "urh-1": "urh.westcode.network",
+            "linkla.ma": "linklama.westcode.network",
+        }
+        ssh_target = ssh_overrides.get(host.hostname, host.hostname)
+
         try:
             proc = subprocess.run(
                 [
@@ -305,7 +311,7 @@ class HostSshProbeView(APIView):
                     "ConnectTimeout=5",
                     "-o",
                     "StrictHostKeyChecking=accept-new",
-                    f"root@{host.hostname}",
+                    f"root@{ssh_target}",
                     "python3",
                     "-",
                     "--collect-json",
@@ -313,7 +319,7 @@ class HostSshProbeView(APIView):
                 input=agent_script.read_text(encoding="utf-8"),
                 capture_output=True,
                 text=True,
-                timeout=20,
+                timeout=45,
                 check=False,
             )
         except Exception as exc:
@@ -379,6 +385,7 @@ class HostSshProbeView(APIView):
                     status=str(c.get("status") or "running"),
                 )
 
+        run_live_sync(run_trivy=False, run_gh=False)
         host.refresh_from_db()
         return Response(
             {

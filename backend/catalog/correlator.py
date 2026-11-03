@@ -22,9 +22,52 @@ KNOWN_IMAGE_ALIASES: dict[str, str] = {
     "library/postgres": "postgres",
     "postgres": "postgres",
     "postgresql": "postgres",
+    "kartoza/pg-backup": "postgres",
+    "pg-backup": "postgres",
+    "library/redis": "redis",
+    "redis": "redis",
+    "checkmk/check-mk-community": "checkmk",
+    "check-mk-community": "checkmk",
+    "checkmk": "checkmk",
+    "jc21/nginx-proxy-manager": "nginx-proxy-manager",
+    "nginx-proxy-manager": "nginx-proxy-manager",
     "library/traefik": "traefik",
     "traefik": "traefik",
     "django": "django",
+    # Westcode AWS ECR repository aliases (from westcode-infra/stacks/aws-westcode/ecr.tf)
+    "ack-desk": "ack-desk",
+    "ack-desk-docs": "ack-desk",
+    "ack-desk-ui": "ack-desk",
+    "angular-django-scaffold": "angular-django-scaffold",
+    "angular-django-scaffold-docs": "angular-django-scaffold",
+    "brockhaus": "brockhaus",
+    "brockhaus-hydrogen": "brockhaus",
+    "csa": "csa",
+    "csaapp": "csa",
+    "csadocs": "csa",
+    "csaui": "csa",
+    "hilde-web": "hilde-web",
+    "linklama": "linklama",
+    "linklamaui": "linklama",
+    "masteroil": "masteroil",
+    "materialdatenbank": "materialdatenbank",
+    "materialdatenbank-docs": "materialdatenbank",
+    "materialdatenbank-ui": "materialdatenbank",
+    "materialdatenbank-converter": "materialdatenbank",
+    "projectory": "projectory",
+    "projectoryui": "projectory",
+    "service-center": "service-center",
+    "service-center-ui": "service-center",
+    "ses-checker": "ses-sl-sw-sync",
+    "ses-cups": "ses-sl-sw-sync",
+    "ses-s4": "ses-sl-sw-sync",
+    "ses-s4-docs": "ses-sl-sw-sync",
+    "ses-service-app": "ses-service-app",
+    "ses-stats": "ses-service-app",
+    "westcode": "westcode-hub",
+    "wuerth_converter": "wuerth-converter",
+    "wyze-agent": "wyze-agent",
+    "wyze-agent-ui": "wyze-agent",
 }
 
 SERVICE_METADATA: dict[str, tuple[str, str]] = {
@@ -46,6 +89,9 @@ SERVICE_METADATA: dict[str, tuple[str, str]] = {
     "csa": ("CSA Portal", "westcode"),
     "angular-django-scaffold": ("Angular-Django Scaffold", "westcode"),
     "postgres": ("PostgreSQL", "postgres"),
+    "redis": ("Redis Cache", "postgres"),
+    "checkmk": ("Checkmk Monitoring", "ubuntu"),
+    "nginx-proxy-manager": ("Nginx Proxy Manager", "traefik"),
     "coder": ("Coder", "coder"),
     "traefik": ("Traefik", "traefik"),
     "valhalla": ("Valhalla", "valhalla"),
@@ -329,7 +375,11 @@ def rebuild_service_groups(
                     target_version=str(pr.get("target_version") or target_version),
                 )
 
+            seen_host_ids: set[int] = set()
             for container, _, running_ver in container_entries:
+                if container.host_id in seen_host_ids:
+                    continue
+                seen_host_ids.add(container.host_id)
                 target_type = "ecr_app" if _is_ecr_container(container) else "compose"
                 HostTarget.objects.create(
                     service_group=sg,

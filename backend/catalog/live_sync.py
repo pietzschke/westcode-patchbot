@@ -418,7 +418,23 @@ def run_live_sync(
                 },
             )
 
-    prs = fetch_github_open_prs("westcoder") if run_gh else []
+    if run_gh:
+        prs = fetch_github_open_prs("westcoder")
+    else:
+        from catalog.models import GitTarget
+
+        prs = [
+            {
+                "service_slug": gt.service_group.slug,
+                "repo_full_name": gt.repo_full_name,
+                "file_path": gt.file_path,
+                "pr_number": gt.pr_number,
+                "pr_url": gt.pr_url,
+                "ci_status": gt.ci_status,
+                "target_version": gt.target_version,
+            }
+            for gt in GitTarget.objects.select_related("service_group").all()
+        ]
 
     trivy_findings: dict[str, list[dict[str, Any]]] = {}
     total_vulns = 0
@@ -430,6 +446,22 @@ def run_live_sync(
             if vulns:
                 trivy_findings[slug] = vulns
                 total_vulns += len(vulns)
+    else:
+        from catalog.models import VulnerabilityFinding
+
+        for vf in VulnerabilityFinding.objects.select_related("service_group").all():
+            slug = vf.service_group.slug
+            trivy_findings.setdefault(slug, []).append(
+                {
+                    "VulnerabilityID": vf.vulnerability_id,
+                    "Severity": vf.severity,
+                    "Status": vf.status,
+                    "FixedVersion": vf.fixed_version,
+                    "PkgName": vf.package_name,
+                    "Title": vf.title,
+                }
+            )
+            total_vulns += 1
 
     groups = rebuild_service_groups(
         renovate_prs=prs,

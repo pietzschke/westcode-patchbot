@@ -1,4 +1,10 @@
 export const SERVICE_LOGOS: Record<string, string> = {
+  westcode: `<svg width="24" height="24" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <path d="M0 24L24 0L176 0L200 24V176L176 200H24L0 176V24Z" fill="#000000"/>
+    <rect x="39.6741" y="86.002" width="66.7006" height="16.6635" transform="rotate(-25 39.6741 86.002)" fill="white"/>
+    <rect x="118.515" y="146.965" width="99.962" height="16.6494" transform="rotate(-75 118.515 146.965)" fill="white"/>
+    <rect x="46.7192" y="100.973" width="66.642" height="16.6836" transform="rotate(25 46.7192 100.973)" fill="white"/>
+  </svg>`,
   plausible: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
     <rect x="4" y="13" width="4" height="7" rx="1.5" fill="#5a61fb"/>
     <rect x="10" y="8" width="4" height="12" rx="1.5" fill="#5a61fb"/>

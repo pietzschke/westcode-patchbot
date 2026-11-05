@@ -18,6 +18,10 @@ from triage.versions import compare_versions, max_version
         ("npm", "2.0.0-rc.2", "2.0.0-rc.10", -1),
         ("npm", "v1.2.3", "1.2.3", 0),
         ("gomod", "v0.23.0", "v0.9.1", 1),
+        ("npm", "", "1.0.0", -1),
+        ("npm", "1.0.0", "", 1),
+        ("gomod", "", "", 0),
+        ("pypi", "", "1.0.0", -1),
     ],
 )
 def test_compare_versions(eco, a, b, expected):

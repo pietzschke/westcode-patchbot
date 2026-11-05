@@ -94,6 +94,27 @@ def test_dismiss_validates_reason_and_records_session_actor(member_client, setti
     assert Finding.objects.get(id=f.id).dismissed_by == member
 
 
+def test_dismiss_ignores_null_snooze_days_for_dismissed_mode(member_client):
+    client, _ = member_client
+    f = make_finding(state="NEW", highest_severity="MEDIUM")
+    resp = client.post(f"/api/findings/{f.id}/dismiss/",
+                       {"mode": "DISMISSED", "reason": "Nur im Test-Setup genutzt, nicht deployed.", "snooze_days": None},
+                       format="json")
+    assert resp.status_code == 200
+    assert Finding.objects.get(id=f.id).state == "DISMISSED"
+
+
+def test_snooze_with_null_snooze_days_uses_default(member_client):
+    client, _ = member_client
+    f = make_finding(state="NEW", highest_severity="MEDIUM")
+    resp = client.post(f"/api/findings/{f.id}/dismiss/",
+                       {"mode": "SNOOZED", "reason": "Warten auf das nächste Release.", "snooze_days": None},
+                       format="json")
+    assert resp.status_code == 200
+    f.refresh_from_db()
+    assert (f.state, (f.snoozed_until - f.dismissed_at).days) == ("SNOOZED", 14)
+
+
 def test_reopen_and_extend(member_client):
     client, member = member_client
     f = make_finding(state="DISMISSED")

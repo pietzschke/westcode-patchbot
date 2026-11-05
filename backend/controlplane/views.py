@@ -77,12 +77,16 @@ class AcknowledgeView(APIView):
 class DismissView(APIView):
     def post(self, request: Request, finding_id: int) -> Response:
         finding = get_object_or_404(Finding.objects.select_related("project"), id=finding_id)
+        mode = str(request.data.get("mode", ""))
+        raw_days = request.data.get("snooze_days")
+        snooze_days = 14
+        if mode == "SNOOZED" and raw_days is not None:  # only snoozing uses it; clients may send null
+            try:
+                snooze_days = int(raw_days)
+            except (TypeError, ValueError):
+                return Response({"detail": "snooze_days muss eine Zahl sein."}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            snooze_days = int(request.data.get("snooze_days", 14))
-        except (TypeError, ValueError):
-            return Response({"detail": "snooze_days muss eine Zahl sein."}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            dismiss(finding, active_member(request), mode=str(request.data.get("mode", "")),
+            dismiss(finding, active_member(request), mode=mode,
                     reason=str(request.data.get("reason", "")), snooze_days=snooze_days, source="WEB",
                     slack=slack_client())
         except ValidationError as exc:

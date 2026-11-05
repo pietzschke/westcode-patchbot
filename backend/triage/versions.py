@@ -85,6 +85,10 @@ def _ident_cmp(x: str, y: str) -> int:
 
 
 def compare_semverish(a: str, b: str) -> int:
+    if not a.strip() or not b.strip():
+        # A missing version is never newer than a known one (``"" > "1.0.0"`` in identifier order).
+        return _sign(bool(a.strip()) - bool(b.strip()))
+
     def parts(v: str):
         v = v.strip().lstrip("vV").split("+", 1)[0]
         core, _, pre = v.partition("-")

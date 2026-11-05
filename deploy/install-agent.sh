@@ -17,6 +17,12 @@ SERVICE_DST="/etc/systemd/system/westcode-patchbot-agent.service"
 TIMER_SRC="${SCRIPT_DIR}/westcode-patchbot-agent.timer"
 TIMER_DST="/etc/systemd/system/westcode-patchbot-agent.timer"
 
+# v1 ran the agent as a long-lived daemon (Type=simple, Restart=always, WantedBy=multi-user.target).
+# Stop and disable it *before* replacing binary and unit: a plain `disable` leaves the old process
+# running, the unit stays active and the v2 timer never triggers a run on upgraded hosts.
+systemctl disable --now westcode-patchbot-agent.service 2>/dev/null || true
+rm -f /etc/systemd/system/multi-user.target.wants/westcode-patchbot-agent.service
+
 install -d -m 0755 /usr/local/libexec
 install -m 0755 "${AGENT_SRC}" "${AGENT_BIN}"
 
@@ -32,6 +38,5 @@ install -m 0644 "${SERVICE_SRC}" "${SERVICE_DST}"
 install -m 0644 "${TIMER_SRC}" "${TIMER_DST}"
 
 systemctl daemon-reload
-# v1 enabled the service directly (with Restart=always); v2 runs it only via the timer.
-systemctl disable westcode-patchbot-agent.service 2>/dev/null || true
+systemctl reset-failed westcode-patchbot-agent.service 2>/dev/null || true
 systemctl enable --now westcode-patchbot-agent.timer

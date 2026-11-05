@@ -176,3 +176,18 @@ def test_installer_enables_timer_not_service():
     assert "westcode-patchbot-agent.timer" in text
     assert "systemctl enable --now westcode-patchbot-agent.timer" in text
     assert "enable --now westcode-patchbot-agent.service" not in text
+
+
+def test_installer_stops_v1_daemon_before_replacing_files_and_enabling_timer():
+    # v1 ran the agent as a long-lived `Type=simple` + `Restart=always` service. A plain `disable` leaves that
+    # process running (and the unit active), so the v2 timer would never fire on upgraded hosts.
+    text = (REPO_ROOT / "deploy/install-agent.sh").read_text()
+    lines = [line.strip() for line in text.splitlines()]
+    stop = next(i for i, line in enumerate(lines)
+                if line.startswith("systemctl disable --now westcode-patchbot-agent.service"))
+    install_bin = next(i for i, line in enumerate(lines) if line.startswith('install -m 0755 "${AGENT_SRC}"'))
+    install_unit = next(i for i, line in enumerate(lines) if line.startswith('install -m 0644 "${SERVICE_SRC}"'))
+    enable_timer = lines.index("systemctl enable --now westcode-patchbot-agent.timer")
+    assert stop < install_bin < install_unit < enable_timer
+    # A bare `disable` without --now must not be the only shutdown path.
+    assert "systemctl disable westcode-patchbot-agent.service" not in text

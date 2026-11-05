@@ -476,9 +476,11 @@ sudo systemctl disable --now westcode-patchbot-agent.service
 
 ```bash
 # Repository-Kopie mit agent/ und deploy/ auf der VM, Token aus dem Patchbot-UI
+# (das Skript stoppt und deaktiviert einen laufenden v1-Daemon, bevor es Binary und Units ersetzt)
 sudo PATCHBOT_TOKEN='<token>' PATCHBOT_URL='https://patch.westcode.de' ./deploy/install-agent.sh
 
 # Kontrolle
+pgrep -af westcode-patchbot-agent                   # kein Dauerprozess (v1-Daemon beendet)
 systemctl list-unit-files 'westcode-patchbot*'      # .service = static, .timer = enabled
 systemctl list-timers westcode-patchbot-agent.timer
 grep -m1 AGENT_VERSION /usr/local/libexec/westcode-patchbot-agent   # "2.0.0"

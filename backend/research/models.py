@@ -38,3 +38,13 @@ class ImageScanCache(models.Model):
     scanned_at = models.DateTimeField()
     status = models.CharField(max_length=16)
     vulnerabilities = models.JSONField(default=list, blank=True)
+
+
+class ExploitSignal(models.Model):
+    """Exploit likelihood per CVE: listed in CISA KEV and/or FIRST EPSS score."""
+
+    cve_id = models.CharField(max_length=64, primary_key=True)
+    kev_listed = models.BooleanField(default=False)
+    kev_added_at = models.DateField(null=True, blank=True)
+    epss = models.FloatField(null=True, blank=True)
+    updated_at = models.DateTimeField(null=True, blank=True)

@@ -97,6 +97,23 @@ def mark_pr_merged(
     return finding
 
 
+NO_DEPLOYMENT_NOTE = "Repository wird nicht deployt (Deployment-Art „keine“) – kein Live-Gang nötig."
+
+
+@transaction.atomic
+def resolve_without_deployment(repository, *, source: str, actor=None, now: datetime | None = None) -> list[Finding]:
+    """Close merged findings of a repository that is not deployed (spec §6.2: deployment_mode = NONE)."""
+    now = now or timezone.now()
+    if repository is None or repository.deployment_mode != "NONE":
+        return []
+    resolved = []
+    for finding in Finding.objects.select_for_update().filter(repository=repository, state="PR_MERGED_WAITING_LIVE"):
+        finding.verified_live_at = None
+        _move(finding, "RESOLVED_NO_DEPLOYMENT", actor=actor, source=source, note=NO_DEPLOYMENT_NOTE, now=now)
+        resolved.append(finding)
+    return resolved
+
+
 def mark_fix_detected_on_branch(finding: Finding, *, commit_sha: str, now: datetime | None = None) -> Finding:
     now = now or timezone.now()
     return mark_pr_merged(

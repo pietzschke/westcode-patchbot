@@ -168,6 +168,19 @@ def test_confirm_and_assign_assets(admin_client):
     assert (repo.project, host.project) == (wuerth, wuerth)
 
 
+def test_setting_deployment_mode_none_resolves_waiting_findings(admin_client):
+    admin, member = admin_client
+    repo = make_repo(project=make_project(), deployment_mode="UNKNOWN")
+    waiting = make_finding(repository=repo, state="PR_MERGED_WAITING_LIVE", merge_commit_sha="m1",
+                           pr_merged_at=timezone.now())
+    other = make_finding(repository=make_repo(project=repo.project), state="PR_MERGED_WAITING_LIVE")
+    assert admin.patch(f"/api/repositories/{repo.id}/", {"deployment_mode": "NONE"}, format="json").status_code == 200
+    waiting.refresh_from_db()
+    other.refresh_from_db()
+    assert (waiting.state, other.state) == ("RESOLVED_NO_DEPLOYMENT", "PR_MERGED_WAITING_LIVE")
+    assert waiting.events.filter(to_state="RESOLVED_NO_DEPLOYMENT", actor=member, source="WEB").exists()
+
+
 def test_repository_deployment_mode(admin_client):
     admin, _ = admin_client
     repo = make_repo()

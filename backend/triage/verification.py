@@ -15,7 +15,9 @@ from typing import Callable
 from django.utils import timezone
 
 from fleet.models import HostContainer
+from inventory.models import RepositoryAsset
 from triage.findings import log_event
+from triage.lifecycle import resolve_without_deployment
 from triage.models import Finding
 from triage.versions import compare_versions
 
@@ -163,6 +165,9 @@ def _verify_infrastructure(finding: Finding, now) -> bool:
 def verify_findings(*, github, image_scan_lookup: ImageScanLookup, now: datetime | None = None) -> list[Finding]:
     now = now or timezone.now()
     verified: list[Finding] = []
+    undeployed = RepositoryAsset.objects.filter(deployment_mode="NONE", findings__state="PR_MERGED_WAITING_LIVE")
+    for repository in undeployed.distinct():
+        resolve_without_deployment(repository, source="SYSTEM", now=now)
     for finding in Finding.objects.filter(layer="APPLICATION", state="PR_MERGED_WAITING_LIVE").select_related("repository"):
         if finding.repository is not None and _verify_application(finding, github, image_scan_lookup, now):
             verified.append(finding)

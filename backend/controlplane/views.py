@@ -29,7 +29,7 @@ from inventory.permissions import IsTeamAdmin, IsTeamMember, active_member
 from research.models import MaintenanceUpdate
 from triage.dismissal import dismiss, reopen
 from triage.jobs import enqueue
-from triage.lifecycle import InvalidTransition, acknowledge, extend_deadline
+from triage.lifecycle import InvalidTransition, acknowledge, extend_deadline, resolve_without_deployment
 from triage.models import Finding
 
 ASSET_MODELS = {"repository": RepositoryAsset, "host": Host, "container": HostContainer}
@@ -208,8 +208,11 @@ class RepositoryView(APIView):
         if mode not in DEPLOYMENT_MODES:
             return Response({"detail": f"deployment_mode muss einer von {sorted(DEPLOYMENT_MODES)} sein."},
                             status=status.HTTP_400_BAD_REQUEST)
-        repo.deployment_mode = mode
-        repo.save(update_fields=["deployment_mode"])
+        with transaction.atomic():
+            repo.deployment_mode = mode
+            repo.save(update_fields=["deployment_mode"])
+            # Merged fixes of a repository that is never deployed cannot go live: close them now.
+            resolve_without_deployment(repo, source="WEB", actor=active_member(request))
         return Response(repository_dict(repo))
 
 

@@ -194,3 +194,11 @@ def test_os_eol_with_unknown_eol_date_does_not_verify():
                      state="IN_PROGRESS", discovered_at=NOW - timedelta(days=3))
     verify_findings(github=FakeGitHub(), image_scan_lookup=no_scan, now=NOW)
     assert state(f) == "IN_PROGRESS"
+
+
+@pytest.mark.django_db
+def test_waiting_finding_of_undeployed_repo_resolves_without_deployment():
+    repo = make_repo(project=make_project(), deployment_mode="NONE")
+    f = make_finding(repository=repo, state="PR_MERGED_WAITING_LIVE", merge_commit_sha="m1", pr_merged_at=MERGED)
+    verify_findings(github=FakeGitHub(), image_scan_lookup=no_scan, now=NOW)
+    assert state(f) == "RESOLVED_NO_DEPLOYMENT"

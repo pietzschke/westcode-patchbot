@@ -1,4 +1,8 @@
-from .settings import *  # noqa: F401,F403
+import os
+
+os.environ.setdefault("DJANGO_SECRET_KEY", "test-only-secret-key-not-for-production-use")
+
+from .settings import *  # noqa: E402,F401,F403
 
 DATABASES = {
     "default": {

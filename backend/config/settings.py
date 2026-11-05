@@ -1,15 +1,20 @@
 import os
 from pathlib import Path
 
+from config.checks import DEV_SECRET_KEY, validate_dev_login, validate_secret_key
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "westcode-patchbot-dev-secret-key")
-DEBUG = os.environ.get("DJANGO_DEBUG", "true").lower() == "true"
+# DEBUG is off unless explicitly enabled; production must provide a real secret key.
+DEBUG = os.environ.get("DJANGO_DEBUG", "false").lower() == "true"
+SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", DEV_SECRET_KEY if DEBUG else "")
+validate_secret_key(debug=DEBUG, secret_key=SECRET_KEY)
 ALLOWED_HOSTS = [h.strip() for h in os.environ.get("DJANGO_ALLOWED_HOSTS", "*").split(",") if h.strip()]
 
 INSTALLED_APPS = [
     "django.contrib.auth",
     "django.contrib.contenttypes",
+    "django.contrib.sessions",
     "rest_framework",
     "fleet",
     "inventory",
@@ -20,7 +25,10 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -50,3 +58,21 @@ USE_I18N = True
 USE_TZ = True
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# --- Sessions, CSRF and API defaults (spec §7.1) ---
+SESSION_COOKIE_SECURE = not DEBUG
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = "Lax"
+SESSION_COOKIE_AGE = 12 * 60 * 60
+CSRF_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_HTTPONLY = False  # the Angular client reads csrftoken and sends X-CSRFToken
+CSRF_TRUSTED_ORIGINS = [o.strip() for o in os.environ.get("DJANGO_CSRF_TRUSTED_ORIGINS", "").split(",") if o.strip()]
+
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework.authentication.SessionAuthentication"],
+    "DEFAULT_PERMISSION_CLASSES": ["inventory.permissions.IsTeamMember"],
+}
+
+PATCHBOT_DEV_LOGIN = os.environ.get("PATCHBOT_DEV_LOGIN") or None
+validate_dev_login(debug=DEBUG, flag=PATCHBOT_DEV_LOGIN)
+PATCHBOT_DEV_LOGIN_ENABLED = DEBUG and PATCHBOT_DEV_LOGIN == "1"

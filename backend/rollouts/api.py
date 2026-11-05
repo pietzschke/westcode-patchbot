@@ -12,6 +12,7 @@ from catalog.correlator import PROJECT_STACK_METADATA
 from catalog.live_sync import run_live_sync
 from catalog.models import ServiceGroup
 from fleet.models import Host
+from inventory.permissions import IsTeamAdmin
 
 
 def _project_display_name_and_logo(stack_name: str) -> tuple[str, str]:
@@ -139,8 +140,6 @@ def serialize_host(host: Host) -> dict[str, Any]:
 
 
 class ServiceListView(APIView):
-    authentication_classes = []
-    permission_classes = []
 
     def get(self, request: Request) -> Response:
         groups = ServiceGroup.objects.prefetch_related(
@@ -155,8 +154,6 @@ class ServiceListView(APIView):
 
 
 class HostListView(APIView):
-    authentication_classes = []
-    permission_classes = []
 
     def get(self, request: Request) -> Response:
         hosts = Host.objects.prefetch_related("packages", "containers").all()
@@ -167,8 +164,6 @@ class HostListView(APIView):
 
 
 class HostDetailView(APIView):
-    authentication_classes = []
-    permission_classes = []
 
     def get(self, request: Request, slug: str) -> Response:
         host = get_object_or_404(Host.objects.prefetch_related("packages", "containers"), slug=slug)
@@ -176,8 +171,7 @@ class HostDetailView(APIView):
 
 
 class HostTokenGenerateView(APIView):
-    authentication_classes = []
-    permission_classes = []
+    permission_classes = [IsTeamAdmin]
 
     def post(self, request: Request, slug: str) -> Response:
         host = get_object_or_404(Host, slug=slug)
@@ -199,8 +193,6 @@ class HostTokenGenerateView(APIView):
 
 
 class ProjectListView(APIView):
-    authentication_classes = []
-    permission_classes = []
 
     def get(self, request: Request) -> Response:
         hosts = list(Host.objects.prefetch_related("packages", "containers").all())
@@ -296,8 +288,6 @@ class ProjectListView(APIView):
 
 
 class LiveSyncView(APIView):
-    authentication_classes = []
-    permission_classes = []
 
     def post(self, request: Request) -> Response:
         summary = run_live_sync()

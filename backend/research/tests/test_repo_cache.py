@@ -62,3 +62,19 @@ def test_rejects_repository_names_outside_org(tmp_path):
     for bad in ("../etc", "westcoder/../x", "other/mdb", "westcoder/mdb;rm"):
         with pytest.raises(ValueError):
             cache.checkout(bad)
+
+
+def test_branch_worktree_commits_changes_on_new_branch(tmp_path, remote):
+    from research.repo_cache import BranchWorktrees
+
+    remotes, origin = remote
+    worktrees = BranchWorktrees(RepoCache(tmp_path / "cache", remote_template=f"file://{remotes}/{{repo}}"))
+    path = worktrees.create("westcoder/mdb", "main", "patchbot/lodash-4.17.21")
+    assert worktrees.commit_all(path, "noop") is False
+    (path / "package.json").write_text('{"name": "mdb", "version": "2"}\n')
+    assert worktrees.commit_all(path, "fix(deps): bump") is True
+    branch = subprocess.run(["git", "branch", "--show-current"], cwd=path, capture_output=True, text=True).stdout.strip()
+    author = subprocess.run(["git", "log", "-1", "--format=%an"], cwd=path, capture_output=True, text=True).stdout.strip()
+    assert (branch, author) == ("patchbot/lodash-4.17.21", "Westcode Patchbot")
+    worktrees.release(path)
+    assert not path.exists()

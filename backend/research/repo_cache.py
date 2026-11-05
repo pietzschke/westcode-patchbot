@@ -90,3 +90,31 @@ class RepoCache:
     def as_checkout_provider(self) -> Callable:
         """Adapter for RestGitHubClient(checkout_provider=...)."""
         return lambda repo, client: self.checkout(repo)
+
+
+class BranchWorktrees:
+    """Worktrees on new ``patchbot/*`` branches for preparing fix PRs (used by the PR engine)."""
+
+    AUTHOR = ("Westcode Patchbot", "patchbot@westcode.de")
+
+    def __init__(self, cache: RepoCache):
+        self.cache = cache
+
+    def create(self, repo: str, base: str, branch: str) -> Path:
+        info = self.cache.checkout(repo)  # fresh detached worktree of the default branch
+        if base:
+            self.cache._git("checkout", "--quiet", "--detach", base, cwd=str(info.path))
+        self.cache._git("checkout", "--quiet", "-b", branch, cwd=str(info.path))
+        return info.path
+
+    def commit_all(self, path: Path, message: str) -> bool:
+        self.cache._git("add", "--all", cwd=str(path))
+        if not self.cache._git("status", "--porcelain", cwd=str(path)).strip():
+            return False
+        name, email = self.AUTHOR
+        self.cache._git("-c", f"user.name={name}", "-c", f"user.email={email}", "commit", "--quiet", "-m", message,
+                        cwd=str(path))
+        return True
+
+    def release(self, path: Path) -> None:
+        self.cache.release(CheckoutInfo(path=Path(path), commit_sha=""))

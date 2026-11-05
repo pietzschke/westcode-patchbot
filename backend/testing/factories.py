@@ -68,3 +68,55 @@ def make_container(host: Host, **kw) -> HostContainer:
     }
     defaults.update(kw)
     return HostContainer.objects.create(host=host, **defaults)
+
+
+def make_finding(**kw):
+    """Create a Finding. Supports ``repository__<field>=…`` / ``project__<field>=…`` shortcuts."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from triage.models import Finding
+
+    related: dict[str, dict] = {}
+    for key in [k for k in kw if "__" in k]:
+        rel, field = key.split("__", 1)
+        related.setdefault(rel, {})[field] = kw.pop(key)
+
+    n = _n()
+    host = kw.pop("host", None)
+    repository = kw.pop("repository", None)
+    project = kw.pop("project", None)
+    if project is None and "project" in related:
+        project = make_project(**related["project"])
+    if repository is None and project is None:
+        project = make_project()
+    if repository is not None and project is None:
+        project = repository.project or make_project()
+    layer = kw.get("layer", "APPLICATION")
+    if repository is None and ("repository" in related or (layer == "APPLICATION" and host is None)):
+        repository = make_repo(project=project, **related.get("repository", {}))
+
+    now = timezone.now()
+    if repository is not None:
+        target_ref = f"repo:{repository.full_name}"
+    elif host is not None:
+        target_ref = f"host:{host.slug}"
+    else:
+        target_ref = f"target-{n}"
+    defaults = {
+        "layer": layer,
+        "target_ref": target_ref,
+        "ecosystem": "npm",
+        "package_name": f"pkg-{n}",
+        "current_version": "1.0.0",
+        "target_version": "1.0.1",
+        "vulnerability_ids": [f"CVE-2026-{9000 + n}"],
+        "highest_severity": "HIGH",
+        "state": "NEW",
+        "complexity": "COMPLEX",
+        "discovered_at": now,
+        "deadline_at": now + timedelta(days=1),
+    }
+    defaults.update(kw)
+    return Finding.objects.create(project=project, repository=repository, host=host, **defaults)

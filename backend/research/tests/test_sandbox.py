@@ -117,3 +117,14 @@ def test_patch_loop_stops_at_iteration_limit(tmp_path):
 def test_patch_loop_refusal_is_reported(tmp_path):
     result = run_patch_loop(make_finding(), client=ScriptedLLM([response([], "refusal")]), tools=tools_for(tmp_path))
     assert result.status == "REFUSED"
+
+
+def test_sandbox_mounts_worktree_git_pointer_read_only(tmp_path):
+    """Code in the sandbox must not be able to repoint /work/.git at an attacker gitdir."""
+    (tmp_path / ".git").write_text("gitdir: /var/patchbot/mirrors/x.git/worktrees/abc\n")
+    cmd = build_sandbox_command(tmp_path, image="patchbot-sandbox:node22", name="pb-1")
+    joined = " ".join(cmd)
+    assert f"{tmp_path}:/work:rw" in joined
+    assert f"{tmp_path / '.git'}:/work/.git:ro" in joined
+    # the read-only overlay must come after the rw worktree mount
+    assert joined.index(f"{tmp_path}:/work:rw") < joined.index("/work/.git:ro")

@@ -21,13 +21,20 @@ class FakeBumper:
 
 
 class FakeWorktrees:
-    def __init__(self, has_changes=True):
+    def __init__(self, has_changes=True, taken_branches=()):
         self.has_changes = has_changes
+        self.taken_branches = set(taken_branches)
         self.created, self.commits, self.released = [], [], []
 
     def create(self, repo, base, branch):
+        from research.repo_cache import BranchCheckout
+
         self.created.append((repo, base, branch))
-        return f"/tmp/wt/{branch}"
+        used, n = branch, 1
+        while used in self.taken_branches:
+            n += 1
+            used = f"{branch}-{n}"
+        return BranchCheckout(f"/tmp/wt/{branch}", used)
 
     def commit_all(self, path, message):
         self.commits.append((path, message))
@@ -236,3 +243,26 @@ def test_complex_with_bot_pr_gets_companion_draft_on_bot_branch():
     assert worktrees.created[0][1] == "renovate/41"
     assert all(branch.startswith("patchbot/") for _, branch in gh.pushes)
     assert f.events.filter(note__icontains="Begleit").exists()
+
+
+@pytest.mark.django_db
+def test_existing_branch_from_closed_pr_gets_suffixed_branch_for_push_and_pr():
+    gh = FakeGitHub(pull_details={(REPO, 77): {"state": "closed", "merged": False}})
+    worktrees = FakeWorktrees(taken_branches={"patchbot/lodash-4.17.21"})
+    f = finding(pr_number=77, pr_source="PATCHBOT")
+    assert ensure_pr(f, github=gh, bumper=FakeBumper(), worktrees=worktrees).action == "PR_CREATED"
+    assert gh.pushes == [(REPO, "patchbot/lodash-4.17.21-2")]
+    assert gh.created_pulls[0]["head"] == "patchbot/lodash-4.17.21-2"
+
+
+@pytest.mark.django_db
+def test_ai_patch_pushes_and_opens_draft_on_branch_actually_created():
+    from research.diff_gate import ChangedFile
+
+    gh = FakeGitHub()
+    worktrees = DiffWorktrees([ChangedFile("src/report.ts", 10, 4, "safeTemplate(x)\n")])
+    worktrees.taken_branches = {"patchbot/lodash-4.17.21", "patchbot/lodash-4.17.21-2"}
+    f = finding(complexity="COMPLEX")
+    assert ensure_pr(f, github=gh, bumper=FakeBumper(), worktrees=worktrees, patcher=FakePatcher()).action == "PR_CREATED"
+    assert gh.pushes == [(REPO, "patchbot/lodash-4.17.21-3")]
+    assert gh.created_pulls[0]["head"] == "patchbot/lodash-4.17.21-3"

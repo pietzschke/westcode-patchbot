@@ -29,7 +29,13 @@ def test_parse_apt_simulation_distinguishes_security_pocket():
     ]
 
 
-def test_collect_host_inventory_gathers_os_packages_and_containers(tmp_path):
+def test_collect_host_inventory_gathers_os_packages_and_containers(tmp_path, monkeypatch):
+    import agent.patchbot_agent as agent_mod
+
+    checkout = tmp_path / "plausible"
+    checkout.mkdir()
+    # git status runs as the checkout's owner, never as root
+    monkeypatch.setattr(agent_mod, "_dir_owner", lambda path: (1000, 1000, "deploy"))
     os_release = tmp_path / "os-release"
     os_release.write_text('ID=debian\nVERSION_ID="12"\n')
     reboot_flag = tmp_path / "reboot-required"
@@ -46,7 +52,7 @@ def test_collect_host_inventory_gathers_os_packages_and_containers(tmp_path):
                 "Labels": {
                     "org.opencontainers.image.title": "Plausible CE",
                     "org.opencontainers.image.revision": "deadbeef",
-                    "com.docker.compose.project.working_dir": "/opt/plausible",
+                    "com.docker.compose.project.working_dir": str(checkout),
                     "com.docker.compose.service": "plausible",
                 },
             },
@@ -72,7 +78,7 @@ def test_collect_host_inventory_gathers_os_packages_and_containers(tmp_path):
             return (0, json.dumps(inspect_payload), "")
         if cmd[:3] == ["docker", "image", "inspect"]:
             return (0, json.dumps(image_inspect_payload), "")
-        if cmd[:2] == ["git", "status"]:
+        if cmd[:4] == ["runuser", "-u", "deploy", "--"] and "status" in cmd:
             return (0, "", "")
         return (0, "", "")
 
@@ -92,7 +98,7 @@ def test_collect_host_inventory_gathers_os_packages_and_containers(tmp_path):
     assert c["name"] == "plausible-1"
     assert c["image_tag"] == "ghcr.io/plausible/community-edition:v2.1.0"
     assert c["repo_digests"] == ["ghcr.io/plausible/community-edition@sha256:111222"]
-    assert c["working_dir"] == "/opt/plausible"
+    assert c["working_dir"] == str(checkout)
     assert c["compose_service"] == "plausible"
     assert c["git_clean"] is True
 

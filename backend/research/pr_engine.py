@@ -41,6 +41,16 @@ def branch_name(finding: Finding) -> str:
     return f"patchbot/{pkg}-{version}"
 
 
+def _create_branch_worktree(worktrees, repo: str, base: str, finding: Finding):
+    """Returns (path, branch). The branch may carry a -2, -3, ... suffix when the requested one already exists
+    (e.g. an earlier Patchbot PR was closed unmerged); pushing and the PR must use the branch actually created."""
+    requested = branch_name(finding)
+    created = worktrees.create(repo, base, requested)
+    if isinstance(created, tuple):  # BranchCheckout(path, branch)
+        return created[0], created[1]
+    return created, requested  # providers that only return a path never rename the branch
+
+
 def render_triage_comment(finding: Finding) -> str:
     lines = [
         "**Westcode Patchbot – Sicherheits-Triage**",
@@ -119,8 +129,7 @@ def _log(finding: Finding, note: str) -> None:
 def _ai_patch(finding: Finding, github, bumper, worktrees, patcher, *, base: str, bump: bool):
     """Claude patches code in a sandbox; the diff gate decides; result is always a Draft-PR."""
     repo = finding.repository
-    branch = branch_name(finding)
-    path = worktrees.create(repo.full_name, base, branch)
+    path, branch = _create_branch_worktree(worktrees, repo.full_name, base, finding)
     try:
         if bump:
             try:
@@ -156,8 +165,7 @@ def _ai_patch(finding: Finding, github, bumper, worktrees, patcher, *, base: str
 
 def _deterministic_pr(finding: Finding, github, bumper, worktrees) -> PrOutcome:
     repo = finding.repository
-    branch = branch_name(finding)
-    path = worktrees.create(repo.full_name, repo.default_branch, branch)
+    path, branch = _create_branch_worktree(worktrees, repo.full_name, repo.default_branch, finding)
     try:
         try:
             bumper.bump(path, finding.ecosystem, finding.package_name, finding.target_version)

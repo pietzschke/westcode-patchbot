@@ -90,6 +90,9 @@ def build_sandbox_command(worktree: Path, image: str, name: str | None = None) -
         "--memory=2g", "--pids-limit=512", "--cpus=2",
         "--user=1000:1000",
         "--volume", f"{worktree}:/work:rw",
+        # The worktree's .git file points at the gitdir host git uses afterwards. Mounted read-only (a bind-mount
+        # point cannot be written, renamed or unlinked) so sandboxed code cannot repoint it at a hostile gitdir.
+        "--volume", f"{Path(worktree) / '.git'}:/work/.git:ro",
         "--workdir", "/work",
         image, "sleep", "infinity",
     ]

@@ -217,8 +217,12 @@ class RestGitHubClient:
             "GIT_TERMINAL_PROMPT": "0",
             "PATH": "/usr/local/bin:/usr/bin:/bin",
         }
+        # The worktree may have been mounted into the code-patching sandbox: never run its hooks (pre-push) or
+        # fsmonitor. The BranchWorktrees layer verifies the .git pointer before committing.
         rc, _, err = self.runner(
-            ["git", "push", f"https://github.com/{repo}.git", f"HEAD:refs/heads/{branch}"], cwd=str(worktree), env=env
+            ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
+             "push", "--no-verify", f"https://github.com/{repo}.git", f"HEAD:refs/heads/{branch}"],
+            cwd=str(worktree), env=env,
         )
         if rc != 0:
             raise RuntimeError(f"git push failed for {repo}:{branch}: {err.strip()[:500]}")

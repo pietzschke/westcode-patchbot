@@ -12,8 +12,10 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import pwd
 import re
 import socket
+import stat
 import subprocess
 from typing import Any, Callable, Iterable, Tuple
 import urllib.request
@@ -114,9 +116,130 @@ def _installed_packages(runner: RunnerCallable) -> dict[str, str]:
     return installed
 
 
-def _git(runner: RunnerCallable, working_dir: str, *args: str) -> tuple[int, str, str]:
-    # safe.directory: /opt checkouts are often owned by a deploy user, the agent runs as root.
-    return runner(["git", "-c", f"safe.directory={working_dir}", *args], cwd=working_dir)
+# --- git checkouts under /opt ------------------------------------------------------------------------------
+# The agent runs as root, but /opt/<app> checkouts belong to a deploy user who controls .git/config. Running
+# git there as root would execute that user's core.fsmonitor / filter.*.clean / ... as root. Therefore HEAD is
+# read by parsing files (no git at all), and `git status` only runs as the checkout's owner.
+
+_HEX_SHA_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+_REF_RE = re.compile(r"^refs/[A-Za-z0-9._/+-]+$")
+_SMALL_FILE = 4096
+_PACKED_REFS_LIMIT = 16 * 1024 * 1024
+GIT_STATUS_ARGV = [
+    "git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "--no-optional-locks",
+    "status", "--porcelain",
+]
+
+
+def _inside(path: str, root: str) -> bool:
+    return path == root or path.startswith(root.rstrip(os.sep) + os.sep)
+
+
+def _read_checkout_file(path: str, root: str, limit: int = _SMALL_FILE) -> str | None:
+    """Read a regular file that (after resolving symlinks) lies inside ``root``; None otherwise.
+
+    O_NONBLOCK + the S_ISREG check keep a planted FIFO/device from blocking or being read as root.
+    """
+    real = os.path.realpath(path)
+    if not _inside(real, root):
+        return None
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(real, flags)
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        chunks: list[bytes] = []
+        total = 0
+        while total < limit:
+            chunk = os.read(fd, min(65536, limit - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+        return b"".join(chunks).decode("utf-8", errors="replace")
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+
+
+def _resolve_git_dir(root: str) -> str | None:
+    dotgit = os.path.join(root, ".git")
+    real = os.path.realpath(dotgit)
+    if not _inside(real, root):
+        return None
+    if os.path.isdir(real):
+        return real
+    content = _read_checkout_file(dotgit, root)
+    if not content or not content.startswith("gitdir:"):
+        return None
+    git_dir = os.path.realpath(os.path.join(root, content[len("gitdir:"):].strip()))
+    # A gitdir file pointing outside the checkout is not followed (it could point anywhere on the host).
+    if not _inside(git_dir, root) or not os.path.isdir(git_dir):
+        return None
+    return git_dir
+
+
+def _packed_ref(common_dir: str, ref: str, root: str) -> str:
+    packed = _read_checkout_file(os.path.join(common_dir, "packed-refs"), root, _PACKED_REFS_LIMIT) or ""
+    for line in packed.splitlines():
+        if not line or line[0] in "#^":
+            continue
+        sha, _, name = line.partition(" ")
+        if name.strip() == ref and _HEX_SHA_RE.match(sha):
+            return sha
+    return ""
+
+
+def read_git_head(working_dir: str) -> str:
+    """HEAD commit of a checkout without executing git: .git/HEAD -> loose ref or packed-refs. "" if unknown."""
+    root = os.path.realpath(working_dir)
+    git_dir = _resolve_git_dir(root)
+    if git_dir is None:
+        return ""
+    common_dir = git_dir
+    commondir = _read_checkout_file(os.path.join(git_dir, "commondir"), root)
+    if commondir and commondir.strip():
+        common_dir = os.path.realpath(os.path.join(git_dir, commondir.strip()))
+        if not _inside(common_dir, root):
+            return ""
+    value = (_read_checkout_file(os.path.join(git_dir, "HEAD"), root) or "").strip()
+    for _ in range(5):  # symbolic refs may chain; bounded
+        if _HEX_SHA_RE.match(value):
+            return value
+        if not value.startswith("ref:"):
+            return ""
+        ref = value[len("ref:"):].strip()
+        if not _REF_RE.match(ref) or ".." in ref.split("/"):
+            return ""
+        loose = _read_checkout_file(os.path.join(common_dir, ref), root)
+        if loose is None:
+            return _packed_ref(common_dir, ref, root)
+        value = loose.strip()
+    return ""
+
+
+def _dir_owner(path: str) -> tuple[int, int, str] | None:
+    try:
+        st = os.stat(path)
+        return (st.st_uid, st.st_gid, pwd.getpwuid(st.st_uid).pw_name)
+    except (OSError, KeyError):
+        return None
+
+
+def _git_clean(runner: RunnerCallable, working_dir: str) -> bool | None:
+    """`git status` as the checkout's owner (runuser, util-linux), so hostile repo config can at most act as the
+    user who already controls it. Root-owned or unknown-owner checkouts are not inspected (None)."""
+    owner = _dir_owner(working_dir)
+    if owner is None or owner[0] == 0:
+        return None
+    rc, out, _ = runner(["runuser", "-u", owner[2], "--", *GIT_STATUS_ARGV], cwd=working_dir)
+    if rc != 0:
+        return None
+    return out.strip() == ""
 
 
 def _collect_containers(runner: RunnerCallable) -> list[dict]:
@@ -156,13 +279,9 @@ def _collect_containers(runner: RunnerCallable) -> list[dict]:
         working_dir = labels.get("com.docker.compose.project.working_dir", "")
         git_clean: bool | None = None
         git_head_sha = ""
-        if working_dir:
-            status_rc, status_out, _ = _git(runner, working_dir, "status", "--porcelain")
-            if status_rc == 0:
-                git_clean = status_out.strip() == ""
-            head_rc, head_out, _ = _git(runner, working_dir, "rev-parse", "HEAD")
-            if head_rc == 0:
-                git_head_sha = head_out.strip()
+        if working_dir and os.path.isabs(working_dir):
+            git_clean = _git_clean(runner, working_dir)
+            git_head_sha = read_git_head(working_dir)
 
         containers.append(
             {

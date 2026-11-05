@@ -88,6 +88,21 @@ def test_push_branch_passes_token_via_env_not_argv(tmp_path):
     assert any("AUTHORIZATION" in v for v in seen["env"].values())
 
 
+def test_push_branch_disables_hooks_and_fsmonitor(tmp_path):
+    seen = {}
+
+    def runner(argv, cwd=None, env=None):
+        seen["argv"] = argv
+        return (0, "", "")
+
+    client = RestGitHubClient(app=StaticToken(), session=FakeSession(), runner=runner)
+    client.push_branch("westcoder/mdb", "patchbot/lodash-4.17.21", Path(tmp_path))
+
+    argv = seen["argv"]
+    assert argv.index("core.hooksPath=/dev/null") < argv.index("push")
+    assert argv.index("core.fsmonitor=false") < argv.index("push")
+
+
 def test_upsert_marker_comment_updates_existing_comment():
     base = "https://api.github.com/repos/westcoder/mdb"
     session = FakeSession({

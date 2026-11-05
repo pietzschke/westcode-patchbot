@@ -100,7 +100,7 @@ def test_slack_ack_from_known_user_acknowledges():
 
 @pytest.mark.django_db
 def test_slack_reopen_button():
-    member = make_member(email="a@westcode.de", slack_user_id="UA")
+    make_member(email="a@westcode.de", slack_user_id="UA")
     f = make_finding(state="DISMISSED", highest_severity="HIGH")
     post_slack(action_payload(f.id, "UA", action="reopen"))
     process_one()

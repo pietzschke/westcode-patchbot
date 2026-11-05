@@ -472,3 +472,74 @@ body {
   font-weight: 700;
   font-size: 0.75rem;
 }
+
+/* ---------------------------------------------------------------------------
+   v2 Triage-Dashboard
+   --------------------------------------------------------------------------- */
+.ampel {
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  gap: 1rem;
+  align-items: start;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.5rem;
+  clip-path: var(--cut-polygon);
+  background: var(--neutral-50);
+  border-left: 6px solid var(--neutral-500);
+}
+.ampel-light { width: 18px; height: 18px; border-radius: 50%; margin-top: 4px; background: var(--neutral-500); }
+.ampel-label { font-size: 1.25rem; font-weight: 700; letter-spacing: -0.02em; }
+.ampel-sub { font-size: 0.8125rem; color: var(--neutral-600); }
+.ampel-causes { margin: 0.5rem 0 0; padding-left: 1.1rem; font-size: 0.8125rem; }
+.ampel-counts { display: flex; gap: 1.25rem; margin: 0; }
+.ampel-counts div { text-align: right; }
+.ampel-counts dt { font-size: 0.6875rem; color: var(--neutral-600); }
+.ampel-counts dd { margin: 0; font-size: 1.25rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.ampel--red { background: var(--salmon-50); border-left-color: var(--salmon-700); }
+.ampel--red .ampel-light { background: var(--salmon-700); }
+.ampel--yellow { background: #fff8e1; border-left-color: var(--status-hint); }
+.ampel--yellow .ampel-light { background: var(--status-hint); }
+.ampel--green { background: var(--success-soft); border-left-color: var(--success); }
+.ampel--green .ampel-light { background: var(--success); }
+.ampel--grey { background: var(--neutral-100); border-left-color: var(--neutral-500); }
+
+.toolbar { display: flex; flex-wrap: wrap; gap: 0.75rem 1.25rem; align-items: center; margin-bottom: 1.5rem; }
+.segmented { display: inline-flex; border: 1px solid var(--neutral-300); border-radius: 6px; overflow: hidden; }
+.segmented button {
+  border: 0; background: var(--paper); padding: 6px 12px; font: inherit; font-size: 0.8125rem; cursor: pointer;
+  border-right: 1px solid var(--neutral-300);
+}
+.segmented button:last-child { border-right: 0; }
+.segmented button.active { background: var(--ink); color: var(--paper); }
+.toggle { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.8125rem; cursor: pointer; }
+
+.finding-row, .maintenance-row {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr 8rem 8rem auto;
+  align-items: center;
+  gap: 0.85rem;
+  min-height: 56px;
+  padding: 0.6rem;
+  border-bottom: 1px solid var(--neutral-200);
+  cursor: pointer;
+}
+.maintenance-row { grid-template-columns: 1fr auto auto auto; cursor: default; }
+.finding-row:hover, .finding-row.selected { background: var(--bluefly-50); }
+.finding-title { font-weight: 600; }
+.finding-sub { font-size: 0.75rem; color: var(--neutral-600); }
+.finding-assignee, .finding-deadline { font-size: 0.8125rem; color: var(--neutral-600); font-variant-numeric: tabular-nums; }
+.finding-deadline.crit { color: var(--salmon-700); font-weight: 700; }
+.sev-badge, .type-badge, .pr-badge, .kev-badge, .proof-badge {
+  display: inline-block; font-size: 0.6875rem; font-weight: 700; padding: 2px 6px; border-radius: 4px;
+  background: var(--neutral-100); color: var(--neutral-700); white-space: nowrap; text-decoration: none;
+}
+.sev-badge[data-sev='CRITICAL'], .kev-badge { background: var(--salmon-700); color: var(--paper); }
+.sev-badge[data-sev='HIGH'] { background: var(--salmon-50); color: var(--salmon-700); }
+.sev-badge[data-sev='MEDIUM'] { background: #fff8e1; color: #7a5c00; }
+.type-badge[data-type='MAJOR'] { background: var(--salmon-50); color: var(--salmon-700); }
+.pr-badge { background: var(--bluefly-50); color: var(--bluefly-600); }
+.empty-state { padding: 1rem 0.6rem; color: var(--neutral-500); font-size: 0.8125rem; list-style: none; }
+.btn-link { border: 0; background: none; color: var(--bluefly-600); font: inherit; font-size: 0.8125rem; cursor: pointer; padding: 0; }
+.detail-col { position: sticky; top: 1.5rem; }
+.user-badge { font-size: 0.75rem; font-weight: 600; padding: 4px 8px; border-radius: 999px; background: var(--neutral-100); }
+.scan-status { font-size: 0.75rem; color: var(--neutral-600); }

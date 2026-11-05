@@ -1,5 +1,7 @@
 import { Component, inject, signal } from '@angular/core';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { HttpErrorResponse } from '@angular/common/http';
+import { AuthService } from './core/auth';
 import { PatchbotApi } from './core/patchbot-api';
 
 @Component({
@@ -35,33 +37,29 @@ import { PatchbotApi } from './core/patchbot-api';
         <span style="color:var(--neutral-600);font-weight:600;">Patchbot</span>
       </div>
       <nav class="nav-links" aria-label="Bereiche">
-        <a
-          class="nav-link"
-          routerLink="/"
-          routerLinkActive="active"
-          [routerLinkActiveOptions]="{ exact: true }"
-        >
-          Nach Dienst
+        <a class="nav-link" routerLink="/" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: true }">
+          Triage-Dashboard
         </a>
-        <a class="nav-link" routerLink="/projects" routerLinkActive="active">
-          Nach Projekt
-        </a>
-        <a class="nav-link" routerLink="/hosts" routerLinkActive="active">
-          Nach Host (23)
-        </a>
+        <a class="nav-link" routerLink="/projects" routerLinkActive="active">Projekte &amp; Zuordnung</a>
+        <a class="nav-link" routerLink="/hosts" routerLinkActive="active">Live-Hosts</a>
       </nav>
       <div class="fleet-health" style="display:flex;align-items:center;gap:12px;">
-        <span class="dot ok"></span>
-        <span>{{ syncStatusText() }}</span>
+        @if (scanStatus()) {
+          <span class="scan-status">{{ scanStatus() }}</span>
+        }
         <button
           type="button"
+          id="run-scan-btn"
           class="btn-secondary btn-standard"
           style="width:auto;margin:0;padding:6px 12px;font-size:12px;"
-          [disabled]="isSyncing()"
-          (click)="runSync()"
+          [disabled]="isStarting()"
+          (click)="runScan()"
         >
-          {{ isSyncing() ? 'Synchronisiere GitHub & Trivy…' : 'Jetzt synchronisieren' }}
+          Scan &amp; Sync starten
         </button>
+        @if (auth.me(); as me) {
+          <span class="user-badge" [title]="me.email">{{ me.name }}</span>
+        }
       </div>
     </header>
     <router-outlet />
@@ -69,21 +67,20 @@ import { PatchbotApi } from './core/patchbot-api';
 })
 export class App {
   private readonly api = inject(PatchbotApi);
-  readonly isSyncing = signal<boolean>(false);
-  readonly syncStatusText = signal<string>('23 Hosts · GitHub & Trivy gekoppelt');
+  readonly auth = inject(AuthService);
+  readonly isStarting = signal(false);
+  readonly scanStatus = signal('');
 
-  runSync(): void {
-    this.isSyncing.set(true);
-    this.api.triggerLiveSync().subscribe({
-      next: (res) => {
-        this.isSyncing.set(false);
-        this.syncStatusText.set(
-          `${res.hosts_count} Hosts · ${res.services_count} Dienste · ${res.prs_count} PRs · ${res.vulns_count} CVEs`,
-        );
+  runScan(): void {
+    this.isStarting.set(true);
+    this.api.runScan().subscribe({
+      next: () => {
+        this.isStarting.set(false);
+        this.scanStatus.set('Scan gestartet – Ergebnisse erscheinen in einigen Minuten.');
       },
-      error: () => {
-        this.isSyncing.set(false);
-        this.syncStatusText.set('Synchronisation fehlgeschlagen');
+      error: (err: HttpErrorResponse) => {
+        this.isStarting.set(false);
+        this.scanStatus.set(err.status === 409 ? 'Ein Scan läuft bereits.' : 'Scan konnte nicht gestartet werden.');
       },
     });
   }

@@ -118,12 +118,15 @@ The v1 prototype focused on automated host rollouts and raw scanner output. In p
 - `owner`: FK `TeamMember` (from Notion people property via email)
 - `is_monitored`: `bool`
 - **Precedence rules:**
-  - New project from Notion: `is_monitored = status ∈ ACTIVE_STATUSES`.
-  - Notion status changes to an archived status → `is_monitored = False` (forced).
-  - Notion status changes to active → `is_monitored` unchanged (a human decides).
-  - Manual toggle in Patchbot persists across syncs.
+  - Source: Notion data source „📂 Projects“ — properties `Name` (title), `Status` (status), `Project Manager` (person → `owner` via email), `Client` (relation → `customer_name` via the related page title), `Intern` (checkbox → `is_internal`).
+  - Status groups (settings): active = `In progress`, `In maintenance`; not started = `Not started`; closed = `Done`, `GESPERRT!` (same classification as Projectory).
+  - New project from Notion: `is_monitored = status ∈ active`.
+  - Status becomes not started or closed → `is_monitored = False` (forced).
+  - First activation (`Not started` → active) → `is_monitored = True`.
+  - Reactivation (closed → active) → `is_monitored` unchanged (a human decides).
+  - Manual toggle in Patchbot persists across syncs while the project stays active.
   - Page no longer returned by Notion → `notion_missing = True`, `is_monitored = False`, findings kept but frozen.
-  - Status values are configured in settings (`NOTION_ACTIVE_STATUSES`, `NOTION_ARCHIVED_STATUSES`); unknown statuses are logged and treated as archived.
+  - Unknown statuses are logged, reported in the sync result and treated as inactive.
 - Turning monitoring off moves open findings of that project to `SUPPRESSED_UNMONITORED` (no DMs, no timers); turning it on re-opens them as `NEW`.
 
 #### `RepositoryAsset`

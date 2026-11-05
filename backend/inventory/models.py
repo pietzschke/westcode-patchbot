@@ -55,6 +55,7 @@ class Project(models.Model):
     slug = models.SlugField(max_length=128, unique=True)
     name = models.CharField(max_length=255)
     customer_name = models.CharField(max_length=255, blank=True, default="")
+    is_internal = models.BooleanField(default=False)
     logo_key = models.CharField(max_length=64, default="westcode")
     notion_page_id = models.CharField(max_length=64, unique=True, null=True, blank=True, default=None)
     notion_status = models.CharField(max_length=64, blank=True, default="")

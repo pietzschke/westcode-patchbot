@@ -85,3 +85,17 @@ MICROSOFT_REDIRECT_URI = os.environ.get("MICROSOFT_REDIRECT_URI", "")
 if MICROSOFT_TENANT_ID:
     validate_tenant_id(MICROSOFT_TENANT_ID)
 LOGIN_REDIRECT_URL = "/"
+
+# --- Notion "📂 Projects" database (read-only sync) ---
+NOTION_API_KEY = os.environ.get("NOTION_API_KEY", "")
+NOTION_PROJECTS_DATABASE_ID = os.environ.get("NOTION_PROJECTS_DATABASE_ID", "41931ab45ea846acbfe46b3305898af2")
+NOTION_PROPERTY_NAMES = {
+    "title": "Name",
+    "status": "Status",
+    "owner": "Project Manager",
+    "client": "Client",
+    "internal": "Intern",
+}
+NOTION_ACTIVE_STATUSES = ["In progress", "In maintenance"]
+NOTION_NOT_STARTED_STATUSES = ["Not started"]
+NOTION_CLOSED_STATUSES = ["Done", "GESPERRT!"]

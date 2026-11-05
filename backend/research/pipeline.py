@@ -1,7 +1,7 @@
 """Daily scan pipeline (spec v2.1 §3.3, §5, §6).
 
 Order: repositories → asset links/suggestions → collect & upsert → exploit
-signals → Claude triage → ownership → PRs → maintenance list → live
+signals (EPSS fetched for new CVEs) → Claude triage → ownership → PRs → maintenance list → live
 verification → Slack DMs. Any unexpected error marks the run FAILED (→ GREY).
 """
 
@@ -16,10 +16,10 @@ from django.utils import timezone
 from inventory.matching import link_containers_to_repositories, suggest_projects, sync_repositories
 from research.collect import collect_and_upsert
 from research.maintenance import sync_maintenance_updates
-from research.models import ImageScanCache, ScanRun
+from research.models import ExploitSignal, ImageScanCache, ScanRun
 from research.pr_engine import ensure_pr
 from research.scan_runs import finalize_scan_run, start_scan_run
-from research.signals_feed import apply_signals
+from research.signals_feed import apply_signals, fetch_epss, refresh_epss
 from research.triage_ai import apply_triage, lift_filter_if_blocked
 from triage.findings import log_event
 from triage.models import OPEN_STATES
@@ -35,6 +35,21 @@ def lookup_image_scan(digest_ref: str) -> dict | None:
     return {"status": cached.status, "vulnerabilities": cached.vulnerabilities} if cached else None
 
 
+def refresh_missing_epss(findings, fetch: Callable[[list[str]], dict] | None = None) -> int:
+    """Fetch EPSS for CVEs that have no score yet, so the policy gate never sees a default 0.0 for a CVE
+    discovered after the 06:30 signals refresh (KEV comes from the daily catalogue). Failure-tolerant."""
+    cves = {c for f in findings for c in f.vulnerability_ids or [] if c.startswith("CVE-")}
+    known = set(ExploitSignal.objects.filter(cve_id__in=cves, epss__isnull=False).values_list("cve_id", flat=True))
+    missing = cves - known
+    if not missing:
+        return 0
+    try:
+        return refresh_epss(missing, fetch=fetch or fetch_epss)
+    except Exception as exc:  # noqa: BLE001 - signals are refreshed again at 06:30; never fail the scan
+        logger.warning("EPSS refresh for %d new CVE(s) failed: %s", len(missing), exc)
+        return 0
+
+
 def run_scan(
     *,
     github,
@@ -46,6 +61,7 @@ def run_scan(
     patcher=None,
     trigger: str = "SCHEDULED",
     release_checkout: Callable | None = None,
+    epss_fetch: Callable[[list[str]], dict] | None = None,
     now: datetime | None = None,
 ) -> ScanRun:
     now = now or timezone.now()
@@ -62,6 +78,7 @@ def run_scan(
         suggest_projects()
         result = collect_and_upsert(run, github=github, trivy=trivy, now=now)
 
+        refresh_missing_epss(result.findings, fetch=epss_fetch)
         for finding in result.findings:
             apply_signals(finding)
             lift_filter_if_blocked(finding, now=now)

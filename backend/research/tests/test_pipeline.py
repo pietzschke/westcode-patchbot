@@ -42,10 +42,14 @@ class Worktrees:
         pass
 
 
+def no_epss(ids):
+    return {"data": []}
+
+
 def scan(**overrides):
     kwargs = dict(github=overrides.pop("github"), trivy=overrides.pop("trivy", Trivy()),
                   llm=FakeLLM(output=TRIAGE), slack=overrides.pop("slack"), bumper=Bumper(), worktrees=Worktrees(),
-                  now=NOW)
+                  epss_fetch=no_epss, now=NOW)
     kwargs.update(overrides)
     return run_scan(**kwargs)
 
@@ -195,3 +199,34 @@ def test_raised_target_on_acknowledged_finding_retriages_supersedes_pr_and_notif
     assert f.pr_number != first_pr and f.pr_target_version == "4.17.23"
     assert len(gh.created_pulls) == 2
     assert [m[0] for m in slack.messages] == ["UO", "UD"]
+
+
+@pytest.mark.django_db
+def test_new_cves_get_epss_before_triage():
+    from research.models import ExploitSignal
+
+    make_repo(full_name="westcoder/mdb", project=make_project(slug="wuerth"))
+    known = {**VULN, "id": "CVE-2026-0003", "package": "axios"}
+    ExploitSignal.objects.create(cve_id="CVE-2026-0003", epss=0.01)
+    requested = []
+
+    def fetch(ids):
+        requested.extend(ids)
+        return {"data": [{"cve": "CVE-2026-0001", "epss": "0.42"}]}
+
+    scan(github=FakeGitHub(), slack=FakeSlack(), trivy=Trivy(TrivyResult("OK", "", [VULN, known])), epss_fetch=fetch)
+
+    assert requested == ["CVE-2026-0001"]  # only CVEs without a stored EPSS score
+    assert Finding.objects.get(package_name="lodash").max_epss == pytest.approx(0.42)
+
+
+@pytest.mark.django_db
+def test_epss_outage_does_not_fail_the_scan():
+    make_repo(full_name="westcoder/mdb", project=make_project(slug="wuerth"))
+
+    def fetch(ids):
+        raise ConnectionError("api.first.org unreachable")
+
+    run = scan(github=FakeGitHub(), slack=FakeSlack(), epss_fetch=fetch)
+    assert run.status == "OK"
+    assert Finding.objects.get().state == "NEW"

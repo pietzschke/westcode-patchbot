@@ -19,6 +19,7 @@ INSTALLED_APPS = [
     "fleet",
     "inventory",
     "triage",
+    "research",
     "catalog",
     "rollouts",
     "alerts",
@@ -105,3 +106,6 @@ NOTION_CLOSED_STATUSES = ["Done", "GESPERRT!"]
 PATCHBOT_TIMEZONE = "Europe/Berlin"
 PATCHBOT_HOLIDAY_SUBDIVISION = os.environ.get("PATCHBOT_HOLIDAY_SUBDIVISION", "NW")
 PATCHBOT_EXTRA_HOLIDAYS = [d.strip() for d in os.environ.get("PATCHBOT_EXTRA_HOLIDAYS", "").split(",") if d.strip()]
+
+# --- Research / scanning ---
+PATCHBOT_REPO_CACHE = Path(os.environ.get("PATCHBOT_REPO_CACHE", BASE_DIR / "var" / "repo-cache"))

@@ -1,4 +1,6 @@
 import json
+import os
+
 from agent.patchbot_agent import (
     collect_host_inventory,
     parse_apt_simulation,
@@ -36,6 +38,8 @@ def test_collect_host_inventory_gathers_os_packages_and_containers(tmp_path, mon
     checkout.mkdir()
     # git status runs as the checkout's owner, never as root
     monkeypatch.setattr(agent_mod, "_dir_owner", lambda path: (1000, 1000, "deploy"))
+    # production only inspects compose checkouts below /opt
+    monkeypatch.setattr(agent_mod, "CHECKOUT_ROOT", os.path.realpath(str(tmp_path)))
     os_release = tmp_path / "os-release"
     os_release.write_text('ID=debian\nVERSION_ID="12"\n')
     reboot_flag = tmp_path / "reboot-required"
@@ -110,5 +114,40 @@ def test_default_runner_catches_os_error_and_returns_127():
     assert rc == 127
     assert out == ""
     assert err != ""
+
+
+def test_default_runner_uses_timeout_and_a_minimal_environment(monkeypatch):
+    import subprocess
+
+    import agent.patchbot_agent as agent_mod
+
+    seen = {}
+
+    def fake_run(cmd, **kwargs):
+        seen.update(kwargs)
+        return subprocess.CompletedProcess(cmd, 0, "out", "")
+
+    monkeypatch.setenv("PATCHBOT_TOKEN", "secret-host-token")
+    monkeypatch.setattr(agent_mod.subprocess, "run", fake_run)
+    assert agent_mod.default_runner(["uname", "-r"]) == (0, "out", "")
+    assert 0 < seen["timeout"] <= 120
+    # The host token never reaches child processes (git runs repo config as the checkout owner).
+    assert "PATCHBOT_TOKEN" not in seen["env"]
+    assert set(seen["env"]) == {"PATH", "LC_ALL"}
+
+
+def test_default_runner_returns_124_on_timeout(monkeypatch):
+    import subprocess
+
+    import agent.patchbot_agent as agent_mod
+
+    def fake_run(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+
+    monkeypatch.setattr(agent_mod.subprocess, "run", fake_run)
+    rc, out, err = agent_mod.default_runner(["apt-get", "-s", "dist-upgrade"])
+    assert rc == 124
+    assert out == ""
+    assert "timed out" in err
 
 

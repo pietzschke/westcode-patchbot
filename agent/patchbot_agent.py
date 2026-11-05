@@ -29,16 +29,29 @@ _APT_INST_RE = re.compile(
 )
 
 
+SAFE_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+# Per command; the systemd unit kills the whole run after TimeoutStartSec=300.
+COMMAND_TIMEOUT_SECONDS = 60
+
+
 def default_runner(cmd: list[str], cwd: str | Path | None = None) -> tuple[int, str, str]:
-    """Execute a fixed argument vector command without a shell."""
+    """Execute a fixed argument vector command without a shell.
+
+    Children get a minimal environment: the agent's own environment holds PATCHBOT_TOKEN, which must not
+    leak to `git status` (run as the checkout owner, with that user's repo config) or any other child.
+    """
     try:
         proc = subprocess.run(
             cmd,
             cwd=str(cwd) if cwd is not None else None,
+            env={"PATH": SAFE_PATH, "LC_ALL": "C"},
             capture_output=True,
             text=True,
             check=False,
+            timeout=COMMAND_TIMEOUT_SECONDS,
         )
+    except subprocess.TimeoutExpired:
+        return (124, "", f"{cmd[0]} timed out after {COMMAND_TIMEOUT_SECONDS}s")
     except OSError as exc:
         return (127, "", str(exc))
     return (proc.returncode, proc.stdout, proc.stderr)
@@ -105,14 +118,19 @@ def _apt_lists_updated_at(stamp_paths: Iterable[Path]) -> str:
 
 
 def _installed_packages(runner: RunnerCallable) -> dict[str, str]:
-    rc, out, _ = runner(["dpkg-query", "-W", "-f=${Package}\t${Version}\n"])
+    # `dpkg-query -W` also lists removed-but-not-purged packages ("rc", status config-files) with their old
+    # version; only status "installed" is actually on the host.
+    rc, out, _ = runner(["dpkg-query", "-W", "-f=${Package}\t${Version}\t${db:Status-Status}\n"])
     if rc != 0:
         return {}
     installed: dict[str, str] = {}
     for line in out.splitlines():
-        name, _, version = line.partition("\t")
-        if name.strip() and version.strip():
-            installed[name.strip()] = version.strip()
+        fields = line.split("\t")
+        if len(fields) != 3 or fields[2].strip() != "installed":
+            continue
+        name, version = fields[0].strip(), fields[1].strip()
+        if name and version:
+            installed[name] = version
     return installed
 
 
@@ -125,6 +143,14 @@ _HEX_SHA_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _REF_RE = re.compile(r"^refs/[A-Za-z0-9._/+-]+$")
 _SMALL_FILE = 4096
 _PACKED_REFS_LIMIT = 16 * 1024 * 1024
+# Compose checkouts are only inspected strictly below this directory (spec: /opt/<app>).
+CHECKOUT_ROOT = "/opt"
+# runuser sets HOME to the owner's home, which ProtectHome=true masks (EACCES). Run git with an empty, neutral
+# environment instead: no global/system config, no $HOME lookups, and nothing inherited from the agent.
+GIT_ENV_ARGV = [
+    "env", "-i", "PATH=/usr/local/bin:/usr/bin:/bin", "HOME=/nonexistent", "XDG_CONFIG_HOME=/nonexistent",
+    "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "LC_ALL=C",
+]
 GIT_STATUS_ARGV = [
     "git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "--no-optional-locks",
     "status", "--porcelain",
@@ -222,6 +248,21 @@ def read_git_head(working_dir: str) -> str:
     return ""
 
 
+def _checkout_dir(working_dir: str) -> str | None:
+    """Resolved compose working_dir if it lies strictly below CHECKOUT_ROOT; None otherwise.
+
+    The label comes from the container, so "/", "/etc", a home directory or a symlink/".." escape must not
+    make the agent read files or run git there.
+    """
+    if not working_dir or not os.path.isabs(working_dir):
+        return None
+    real = os.path.realpath(working_dir)
+    root = os.path.realpath(CHECKOUT_ROOT)
+    if real == root or not _inside(real, root):
+        return None
+    return real
+
+
 def _dir_owner(path: str) -> tuple[int, int, str] | None:
     try:
         st = os.stat(path)
@@ -236,7 +277,7 @@ def _git_clean(runner: RunnerCallable, working_dir: str) -> bool | None:
     owner = _dir_owner(working_dir)
     if owner is None or owner[0] == 0:
         return None
-    rc, out, _ = runner(["runuser", "-u", owner[2], "--", *GIT_STATUS_ARGV], cwd=working_dir)
+    rc, out, _ = runner(["runuser", "-u", owner[2], "--", *GIT_ENV_ARGV, *GIT_STATUS_ARGV], cwd=working_dir)
     if rc != 0:
         return None
     return out.strip() == ""
@@ -279,9 +320,10 @@ def _collect_containers(runner: RunnerCallable) -> list[dict]:
         working_dir = labels.get("com.docker.compose.project.working_dir", "")
         git_clean: bool | None = None
         git_head_sha = ""
-        if working_dir and os.path.isabs(working_dir):
-            git_clean = _git_clean(runner, working_dir)
-            git_head_sha = read_git_head(working_dir)
+        checkout = _checkout_dir(working_dir)
+        if checkout is not None:
+            git_clean = _git_clean(runner, checkout)
+            git_head_sha = read_git_head(checkout)
 
         containers.append(
             {

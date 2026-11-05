@@ -26,7 +26,12 @@ IMAGE = [{
     "Created": "2026-11-04T09:15:00.123456789Z",
 }]
 APT = "Inst openssl [3.0.13-0ubuntu3.4] (3.0.13-0ubuntu3.5 Ubuntu:24.04/noble-security [amd64])\n"
-DPKG = "openssl\t3.0.13-0ubuntu3.4\nlibc6\t2.39-0ubuntu8.3\n"
+DPKG = (
+    "openssl\t3.0.13-0ubuntu3.4\tinstalled\n"
+    "libc6\t2.39-0ubuntu8.3\tinstalled\n"
+    # removed without --purge ("rc"): only config files are left, the package is not installed
+    "nginx\t1.24.0-2ubuntu7\tconfig-files\n"
+)
 
 READ_ONLY_PREFIXES = [
     ["uname", "-r"],
@@ -40,6 +45,10 @@ READ_ONLY_PREFIXES = [
 
 GIT_STATUS_AS_OWNER = [
     "runuser", "-u", "deploy", "--",
+    # Neutral, empty environment: under ProtectHome=true the owner's $HOME is masked, and the root-only
+    # agent environment (PATCHBOT_TOKEN) must never reach a process that runs the owner's repo config.
+    "env", "-i", "PATH=/usr/local/bin:/usr/bin:/bin", "HOME=/nonexistent", "XDG_CONFIG_HOME=/nonexistent",
+    "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "LC_ALL=C",
     "git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "--no-optional-locks",
     "status", "--porcelain",
 ]
@@ -88,6 +97,14 @@ def deploy_owner(monkeypatch):
     monkeypatch.setattr(agent_mod, "_dir_owner", lambda path: (1000, 1000, "deploy"))
 
 
+@pytest.fixture(autouse=True)
+def checkout_root(tmp_path, monkeypatch):
+    """Production only inspects compose checkouts below /opt; tests place them below tmp_path instead."""
+    root = os.path.realpath(str(tmp_path))
+    monkeypatch.setattr(agent_mod, "CHECKOUT_ROOT", root)
+    return root
+
+
 def _collect(tmp_path, runner):
     os_release = tmp_path / "os-release"
     os_release.write_text('ID=ubuntu\nVERSION_ID="24.04"\n')
@@ -116,6 +133,18 @@ def test_collects_v2_host_fields(tmp_path):
     }
     assert by_name["libc6"]["candidate_version"] == ""
     assert by_name["libc6"]["is_security_update"] is False
+    assert "nginx" not in by_name  # dpkg status "config-files" (rc) is not installed
+
+
+def test_dpkg_query_asks_for_the_package_status():
+    calls = []
+
+    def runner(argv, cwd=None):
+        calls.append(argv)
+        return (0, DPKG + "half\t1.0\thalf-installed\nbroken-line\n", "")
+
+    assert agent_mod._installed_packages(runner) == {"openssl": "3.0.13-0ubuntu3.4", "libc6": "2.39-0ubuntu8.3"}
+    assert calls == [["dpkg-query", "-W", "-f=${Package}\t${Version}\t${db:Status-Status}\n"]]
 
 
 def test_missing_apt_stamp_reports_empty_timestamp(tmp_path):
@@ -162,6 +191,31 @@ def test_git_is_never_run_as_root_in_a_root_owned_checkout(tmp_path, monkeypatch
     assert container["git_clean"] is None
     assert container["git_head_sha"] == SHA
     assert not [c for c in runner.calls if "git" in c]
+
+
+@pytest.mark.parametrize("working_dir", ["/", "/etc", "/home/deploy/app", "relative/app"])
+def test_working_dir_outside_checkout_root_is_not_inspected(tmp_path, working_dir):
+    runner = FakeRunner(working_dir)
+    container = _collect(tmp_path, runner)["containers"][0]
+    assert container["working_dir"] == working_dir  # still reported for asset matching
+    assert container["git_clean"] is None
+    assert container["git_head_sha"] == ""
+    assert not [c for c in runner.calls if "runuser" in c or "git" in c]
+
+
+def test_working_dir_escaping_checkout_root_via_symlink_or_dotdot_is_not_inspected(tmp_path, checkout_root):
+    outside = tmp_path.parent / f"{tmp_path.name}-outside"
+    (outside / ".git" / "refs" / "heads").mkdir(parents=True)
+    (outside / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+    (outside / ".git" / "refs" / "heads" / "main").write_text(SHA + "\n")
+    link = tmp_path / "app"
+    link.symlink_to(outside)
+    for working_dir in (str(link), os.path.join(checkout_root, "..", outside.name), checkout_root):
+        runner = FakeRunner(working_dir)
+        container = _collect(tmp_path, runner)["containers"][0]
+        assert container["git_head_sha"] == "", working_dir
+        assert container["git_clean"] is None, working_dir
+        assert not [c for c in runner.calls if "runuser" in c], working_dir
 
 
 def test_unknown_owner_skips_git_clean(tmp_path, monkeypatch):

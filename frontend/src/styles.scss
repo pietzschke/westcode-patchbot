@@ -570,3 +570,27 @@ body {
 .inbox-row .finding-main, .asset-row > :first-child { flex: 1; }
 .assign-select, .deployment-select { font: inherit; font-size: 0.8125rem; padding: 4px 6px; border: 1px solid var(--neutral-300); border-radius: 4px; }
 .project-card .group-name { display: inline-flex; gap: 0.4rem; align-items: center; }
+
+/* v2 live hosts */
+.host-row { cursor: pointer; }
+.host-row:hover, .host-row.selected { background: var(--bluefly-50); }
+.host-badges { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.25rem; }
+.host-badges:empty { display: none; }
+.host-facts { display: grid; grid-template-columns: 7.5rem 1fr; gap: 0.3rem 0.75rem; margin: 0; font-size: 0.8125rem; }
+.host-facts dt { color: var(--neutral-600); font-weight: 700; font-size: 0.75rem; }
+.host-facts dd { margin: 0; }
+.mono { font-family: var(--font-mono, ui-monospace, monospace); font-size: 11px; overflow-wrap: anywhere; }
+.image-built { font-style: italic; }
+
+/* v2 team directory */
+.member-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: 0.75rem; margin: 0.85rem 0; }
+.member-form-grid label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.75rem; font-weight: 700; color: var(--neutral-600); }
+.member-form-grid input {
+  font: inherit; font-size: 0.8125rem; font-weight: 400; color: var(--ink); padding: 6px 8px;
+  border: 1px solid var(--neutral-300); border-radius: 4px; background: var(--paper);
+}
+.member-form-flags { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; margin-bottom: 0.6rem; }
+.team-row.inactive { color: var(--neutral-500); }
+.team-row .type-badge { margin-right: 0.25rem; }
+.team-actions { text-align: right; white-space: nowrap; }
+.team-actions .btn-link + .btn-link { margin-left: 0.85rem; }

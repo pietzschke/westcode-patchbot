@@ -77,19 +77,26 @@ export interface ProjectDto {
 export interface HostContainerDto {
   name: string;
   image_tag: string;
+  repo_digests?: string[];
   oci_title?: string;
   oci_revision?: string;
+  oci_source?: string;
+  /** Build time of the image — a display hint only, never a verification proof. */
+  image_created_at?: string | null;
   working_dir?: string;
   compose_service?: string;
+  git_head_sha?: string;
   git_clean?: boolean | null;
   status?: string;
 }
 
+/** A pending apt upgrade (installed-only packages are not listed). */
 export interface HostPackageDto {
   name: string;
   installed_version: string;
   candidate_version: string;
   is_security_update: boolean;
+  source_pocket?: string;
 }
 
 export interface HostDto {
@@ -103,11 +110,17 @@ export interface HostDto {
   os_distro?: string;
   distro?: string;
   os_version?: string;
+  os_eol_date?: string | null;
   is_os_eol?: boolean;
   is_eol?: boolean;
+  kernel_version?: string;
   reboot_required?: boolean;
+  agent_version?: string;
+  apt_lists_updated_at?: string | null;
   last_seen_at?: string | null;
   has_agent_token?: boolean;
+  project?: { slug: string; name: string } | null;
+  installed_package_count?: number;
   pending_apt_count?: number;
   actionable_packages_count?: number;
   security_apt_count?: number;

@@ -42,6 +42,7 @@ import { PatchbotApi } from './core/patchbot-api';
         </a>
         <a class="nav-link" routerLink="/projects" routerLinkActive="active">Projekte &amp; Zuordnung</a>
         <a class="nav-link" routerLink="/hosts" routerLinkActive="active">Live-Hosts</a>
+        <a class="nav-link" routerLink="/team" routerLinkActive="active">Team</a>
       </nav>
       <div class="fleet-health" style="display:flex;align-items:center;gap:12px;">
         @if (scanStatus()) {

@@ -103,6 +103,26 @@ def test_extend_only_once_per_stage_with_reason():
 
 
 @pytest.mark.django_db
+def test_extending_an_overdue_finding_starts_from_now_and_can_escalate_again(settings):
+    from triage.notifications import escalate_overdue
+    from testing.fakes import FakeSlack
+
+    settings.SLACK_TEAM_CHANNEL_ID = "C-TEAM"
+    owner = make_member(email="owner@westcode.de")
+    f = make_finding(state="IN_PROGRESS", complexity="SIMPLE", assignee=owner,
+                     deadline_at=NOW - timedelta(days=10), escalated_stage=2)
+    extend_deadline(f, owner, reason="Warten auf Upstream-Release 2.4.1", now=NOW)
+    f.refresh_from_db()
+    assert f.deadline_at == NOW + timedelta(days=4)  # from now, not from the long-past deadline
+    assert f.deadline_at > NOW
+    assert f.escalated_stage == 1
+
+    slack = FakeSlack()
+    assert escalate_overdue(slack=slack, now=NOW + timedelta(days=4, hours=2)) == 1
+    f.refresh_from_db()
+    assert f.escalated_stage == 2
+
+@pytest.mark.django_db
 def test_invalid_transition_raises():
     owner = make_member(email="owner@westcode.de")
     with pytest.raises(InvalidTransition):

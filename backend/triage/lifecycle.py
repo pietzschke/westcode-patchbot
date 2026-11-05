@@ -10,6 +10,7 @@ from django.utils import timezone
 from triage.clock import deadline_for
 from triage.findings import _start_new, log_event
 from triage.models import OPEN_STATES, Finding
+from triage.notifications import STAGE_BY_STATE
 
 MIN_REASON_LENGTH = 15
 
@@ -118,8 +119,14 @@ def extend_deadline(finding: Finding, actor, *, reason: str, now: datetime | Non
         raise InvalidTransition(f"Cannot extend a finding in state {finding.state}.")
     if finding.extended_in_stage == finding.state:
         raise InvalidTransition("The deadline was already extended in this stage.")
-    finding.deadline_at = _deadline(finding, finding.state, finding.deadline_at or now)
+    # Extend from now when already overdue — otherwise the one allowed extension could still be in the past.
+    start = max(finding.deadline_at, now) if finding.deadline_at else now
+    finding.deadline_at = _deadline(finding, finding.state, start)
     finding.extended_in_stage = finding.state
+    # The stage was already escalated: re-arm it so the extended deadline can escalate once more.
+    stage = STAGE_BY_STATE[finding.state]
+    if finding.escalated_stage == stage:
+        finding.escalated_stage = stage - 1
     finding.save()
     log_event(finding, actor=actor, source="WEB", from_state=finding.state, to_state=finding.state,
               note=f"Frist verlängert: {reason}", at=now)

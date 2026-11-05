@@ -51,8 +51,13 @@ def run_scan(
     now = now or timezone.now()
     run = start_scan_run(trigger, now=now)
     result = None
+    github_failures = 0
     try:
-        sync_repositories(github)
+        try:
+            sync_repositories(github)
+        except Exception as exc:
+            record_health("github", False, f"Repository-Sync fehlgeschlagen: {exc}", now)
+            raise
         link_containers_to_repositories()
         suggest_projects()
         result = collect_and_upsert(run, github=github, trivy=trivy, now=now)
@@ -74,8 +79,12 @@ def run_scan(
             except Exception as exc:  # noqa: BLE001 - one failing PR must not stop the run
                 logger.exception("PR handling failed for finding %s", finding.id)
                 record_health("github", False, str(exc), now)
+                github_failures += 1
                 log_event(finding, source="SYSTEM", from_state=finding.state, to_state=finding.state, at=now,
                           note=f"PR-Vorbereitung fehlgeschlagen: {exc}")
+        if github_failures == 0:
+            # Repo sync and every PR step succeeded in this run → clear an earlier failure (Ampel).
+            record_health("github", True, now=now)
 
         sync_maintenance_updates(github=github)
         verify_findings(github=github, image_scan_lookup=lookup_image_scan, now=now)

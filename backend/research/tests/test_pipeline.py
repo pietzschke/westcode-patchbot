@@ -101,3 +101,52 @@ def test_checkouts_are_released():
     released = []
     scan(github=FakeGitHub(), slack=FakeSlack(), release_checkout=released.append)
     assert len(released) == 1
+
+
+@pytest.mark.django_db
+def test_clean_github_steps_mark_github_integration_healthy():
+    from triage.models import IntegrationHealth
+    from triage.notifications import record_health
+
+    make_repo(full_name="westcoder/mdb", project=make_project(slug="wuerth"))
+    record_health("github", False, "push rejected", NOW)
+
+    run = scan(github=FakeGitHub(), slack=FakeSlack())
+
+    assert run.status == "OK"
+    health = IntegrationHealth.objects.get(name="github")
+    assert (health.ok, health.last_error) == (True, "")
+
+
+@pytest.mark.django_db
+def test_failed_pr_handling_keeps_github_integration_failing():
+    from triage.models import IntegrationHealth
+    from triage.notifications import record_health
+
+    make_repo(full_name="westcoder/mdb", project=make_project(slug="wuerth"))
+    record_health("github", True, "", NOW)
+
+    class PushFailingGitHub(FakeGitHub):
+        def push_branch(self, repo, branch, worktree):
+            raise RuntimeError("push rejected")
+
+    scan(github=PushFailingGitHub(), slack=FakeSlack())
+
+    health = IntegrationHealth.objects.get(name="github")
+    assert health.ok is False
+    assert "push rejected" in health.last_error
+
+
+@pytest.mark.django_db
+def test_failed_repo_sync_marks_github_integration_failing():
+    from triage.models import IntegrationHealth
+
+    class ExplodingGitHub(FakeGitHub):
+        def list_org_repos(self):
+            raise RuntimeError("GitHub down")
+
+    scan(github=ExplodingGitHub(), slack=FakeSlack())
+
+    health = IntegrationHealth.objects.get(name="github")
+    assert health.ok is False
+    assert "GitHub down" in health.last_error

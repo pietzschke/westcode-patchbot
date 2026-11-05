@@ -46,3 +46,17 @@ def test_empty_diff_is_rejected():
 def test_accepts_normal_code_and_dockerfile_changes():
     check_diff([cf("src/report.ts", added=12, removed=4), cf("Dockerfile", added=1, removed=1),
                 cf("package.json", added_text='    "lodash": "^4.17.21",\n')])
+
+
+@pytest.mark.parametrize(
+    "path",
+    [".gitattributes", "src/.gitattributes", ".gitmodules", ".npmrc", "packages/web/.npmrc", ".yarnrc",
+     ".yarnrc.yml", ".yarn/plugins/plugin.cjs", ".yarn/releases/yarn-4.cjs", ".pnpmfile.cjs", "app/.pnpmfile.cjs"],
+)
+def test_vcs_and_package_manager_config_is_denied(path):
+    with pytest.raises(DiffRejected):
+        check_diff([cf(path)])
+
+
+def test_similar_but_harmless_names_are_allowed():
+    check_diff([cf("src/gitattributes.ts"), cf("docs/npmrc.md"), cf("src/yarn/helper.js")])

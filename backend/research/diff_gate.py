@@ -20,6 +20,13 @@ DENIED_PATHS = [
         r"(^|/)(docker-)?compose[^/]*\.ya?ml$",
         r"(^|/)\.env",
         r"(^|/)\.git/",
+        # VCS / package-manager config: changes diff rendering, fetches code or runs code on install.
+        r"(^|/)\.gitattributes$",
+        r"(^|/)\.gitmodules$",
+        r"(^|/)\.npmrc$",
+        r"(^|/)\.yarnrc",
+        r"(^|/)\.yarn/",
+        r"(^|/)\.pnpmfile\.cjs$",
     )
 ]
 SECRET_PATTERNS = [

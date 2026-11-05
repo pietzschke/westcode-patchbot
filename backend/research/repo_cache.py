@@ -246,7 +246,7 @@ class BranchWorktrees:
         return BranchCheckout(info.path, used)
 
     def _stage(self, path: Path) -> None:
-        """Verify the worktree pointer, stage everything and refuse embedded repositories / submodule changes."""
+        """Verify the worktree pointer, stage everything and refuse submodule / symlink changes."""
         self.cache.verify_worktree(path)
         self.cache.worktree_git(path, "add", "--all")
         raw = self.cache.worktree_git(path, "diff", "--cached", "--raw", "--no-renames", "--no-ext-diff", "-z")
@@ -255,6 +255,15 @@ class BranchWorktrees:
             modes = fields[i].lstrip(":").split(" ")[:2]
             if "160000" in modes:
                 raise DiffRejected(f"Eingebettetes Git-Repository/Submodul geändert: {fields[i + 1]}")
+            if "120000" in modes:
+                # The gate only sees the link target as one line of text; what the link exposes stays invisible.
+                raise DiffRejected(f"Symlink geändert: {fields[i + 1]}")
+
+    def _diff_git(self, path: Path, *args: str) -> str:
+        """``git diff`` that reads no gitattributes: neither the worktree's (writable from the sandbox) nor the
+        committed ones may mark files ``binary``/``-diff`` and thereby hide added text from the gate."""
+        empty_tree = self.cache.worktree_git(path, "hash-object", "-t", "tree", os.devnull).strip()
+        return self.cache.worktree_git(path, f"--attr-source={empty_tree}", *args)
 
     def commit_all(self, path: Path, message: str) -> bool:
         self._stage(path)
@@ -270,20 +279,26 @@ class BranchWorktrees:
 
         ``--no-renames`` is essential: with rename detection a move into ``.github/workflows/`` is reported as
         ``{src => .github/workflows}/ci.yml`` and would dodge the denied-path check.
+
+        Binary changes (numstat ``-``) are refused: git prints no ``+`` lines for them, so line limit, secret and
+        lifecycle-script checks would see an empty change.
         """
         from research.diff_gate import ChangedFile
 
         self._stage(path)
         counts: dict[str, tuple[int, int]] = {}
-        numstat = self.cache.worktree_git(path, "diff", "--cached", "--numstat", "--no-renames", "--no-ext-diff", "-z")
+        numstat = self._diff_git(path, "diff", "--cached", "--numstat", "--no-renames", "--no-ext-diff",
+                                 "--no-textconv", "-z")
         for record in numstat.split("\0"):
             if not record:
                 continue
             added, removed, name = record.split("\t", 2)
-            counts[name] = (int(added) if added.isdigit() else 0, int(removed) if removed.isdigit() else 0)
+            if not (added.isdigit() and removed.isdigit()):
+                raise DiffRejected(f"Binärdatei geändert: {name}")
+            counts[name] = (int(added), int(removed))
         added_text: dict[str, list[str]] = {name: [] for name in counts}
-        patch = self.cache.worktree_git(path, "-c", "core.quotePath=false", "diff", "--cached", "-U0", "--no-color",
-                                        "--no-renames", "--no-ext-diff", "--no-textconv")
+        patch = self._diff_git(path, "-c", "core.quotePath=false", "diff", "--cached", "-U0", "--no-color",
+                               "--no-renames", "--no-ext-diff", "--no-textconv", "--text")
         # Only "+++" lines in a file header name the file; inside hunks a line "+++ b/x" is added content.
         current, in_header = None, False
         for line in patch.split("\n"):

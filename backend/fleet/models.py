@@ -15,6 +15,12 @@ class Host(models.Model):
     reboot_required = models.BooleanField(default=False)
     apt_lists_updated_at = models.DateTimeField(null=True, blank=True, default=None)
     agent_version = models.CharField(max_length=32, blank=True, default="")
+    project = models.ForeignKey(
+        "inventory.Project", null=True, blank=True, on_delete=models.SET_NULL, related_name="hosts"
+    )
+    suggested_project = models.ForeignKey(
+        "inventory.Project", null=True, blank=True, on_delete=models.SET_NULL, related_name="suggested_hosts"
+    )
     agent_token_hash = models.CharField(max_length=128, blank=True, default="")
     last_seen_at = models.DateTimeField(null=True, blank=True, default=None)
 
@@ -57,6 +63,16 @@ class HostContainer(models.Model):
     git_clean = models.BooleanField(null=True, blank=True, default=None)
     status = models.CharField(max_length=64, default="running")
     reported_at = models.DateTimeField(null=True, blank=True, default=None)
+    project = models.ForeignKey(
+        "inventory.Project", null=True, blank=True, on_delete=models.SET_NULL, related_name="containers"
+    )
+    repository = models.ForeignKey(
+        "inventory.RepositoryAsset",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="running_containers",
+    )
 
     class Meta:
         ordering = ["name"]

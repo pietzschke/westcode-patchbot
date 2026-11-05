@@ -7,7 +7,9 @@ import subprocess
 from pathlib import Path
 from typing import Callable
 
-NPM = {"npm", "yarn", "pnpm", "node-pkg"}
+# Only npm with a package-lock.json: yarn.lock / pnpm-lock.yaml would stay untouched by
+# `npm install --package-lock-only` (plus a stray package-lock.json) → a PR that fixes nothing.
+NPM = {"npm"}
 UV = {"uv"}
 PIP = {"pip", "pipenv", "python-pkg"}
 
@@ -33,7 +35,7 @@ class Bumper:
     def bump(self, worktree: Path, ecosystem: str, package: str, version: str) -> list[str]:
         worktree = Path(worktree)
         eco = (ecosystem or "").lower()
-        if eco in NPM and (worktree / "package.json").exists():
+        if eco in NPM and (worktree / "package.json").exists() and (worktree / "package-lock.json").exists():
             # --ignore-scripts: never run package lifecycle scripts on the Patchbot server.
             self._run(["npm", "install", f"{package}@{version}", "--package-lock-only", "--ignore-scripts",
                        "--no-audit", "--no-fund"], worktree)
@@ -43,7 +45,7 @@ class Bumper:
             return ["uv.lock"]
         if eco in PIP:
             return self._bump_requirements(worktree, package, version)
-        raise BumpFailed(f"unsupported ecosystem for automatic bumps: {ecosystem}")
+        raise BumpFailed(f"unsupported ecosystem or lockfile for automatic bumps: {ecosystem}")
 
     @staticmethod
     def _bump_requirements(worktree: Path, package: str, version: str) -> list[str]:

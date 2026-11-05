@@ -14,6 +14,8 @@ CONFIG_DIR="/etc/westcode-patchbot"
 ENV_FILE="/etc/westcode-patchbot/agent.env"
 SERVICE_SRC="${SCRIPT_DIR}/westcode-patchbot-agent.service"
 SERVICE_DST="/etc/systemd/system/westcode-patchbot-agent.service"
+TIMER_SRC="${SCRIPT_DIR}/westcode-patchbot-agent.timer"
+TIMER_DST="/etc/systemd/system/westcode-patchbot-agent.timer"
 
 install -d -m 0755 /usr/local/libexec
 install -m 0755 "${AGENT_SRC}" "${AGENT_BIN}"
@@ -27,6 +29,9 @@ EOF
 chmod 0600 "${ENV_FILE}"
 
 install -m 0644 "${SERVICE_SRC}" "${SERVICE_DST}"
+install -m 0644 "${TIMER_SRC}" "${TIMER_DST}"
 
 systemctl daemon-reload
-systemctl enable --now westcode-patchbot-agent.service
+# v1 enabled the service directly (with Restart=always); v2 runs it only via the timer.
+systemctl disable westcode-patchbot-agent.service 2>/dev/null || true
+systemctl enable --now westcode-patchbot-agent.timer

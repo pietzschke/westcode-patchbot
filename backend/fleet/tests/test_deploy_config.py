@@ -45,3 +45,29 @@ def test_deploy_systemd_unit_and_installer_script_are_hardened():
     assert "PATCHBOT_URL" in installer_text
     assert "PATCHBOT_TOKEN" in installer_text
     assert "PATCHBOT_HOSTNAME" in installer_text
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def test_agent_unit_is_hardened_oneshot():
+    text = (REPO_ROOT / "deploy/westcode-patchbot-agent.service").read_text()
+    for line in (
+        "Type=oneshot",
+        "ProtectSystem=strict",
+        "ProtectHome=true",
+        "PrivateTmp=true",
+        "NoNewPrivileges=true",
+        "ReadOnlyPaths=/opt",
+    ):
+        assert line in text, line
+    assert "Restart=" not in text
+    # A oneshot unit is triggered by the timer, never enabled on its own.
+    assert "[Install]" not in text
+
+
+def test_installer_enables_timer_not_service():
+    text = (REPO_ROOT / "deploy/install-agent.sh").read_text()
+    assert "westcode-patchbot-agent.timer" in text
+    assert "systemctl enable --now westcode-patchbot-agent.timer" in text
+    assert "enable --now westcode-patchbot-agent.service" not in text

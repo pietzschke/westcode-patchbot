@@ -17,12 +17,14 @@ def test_parse_apt_simulation_distinguishes_security_pocket():
             "installed_version": "3.0.11-1",
             "candidate_version": "3.0.14-1~deb12u1",
             "is_security_update": True,
+            "source_pocket": "stable-security",
         },
         {
             "name": "curl",
             "installed_version": "7.88.1-10",
             "candidate_version": "7.88.1-10+deb12u5",
             "is_security_update": False,
+            "source_pocket": "stable",
         },
     ]
 

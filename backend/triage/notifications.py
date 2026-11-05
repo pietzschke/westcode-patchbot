@@ -43,15 +43,24 @@ def _finding_line(f: Finding) -> str:
     return f"*{f.project.name}* · `{f.package_name}` → {f.target_version or '–'} · {cves} ({f.highest_severity}) · {kind} · Frist {deadline}"
 
 
-def _finding_blocks(f: Finding) -> list[dict]:
-    elements = [{"type": "button", "action_id": "ack", "value": str(f.id), "style": "primary",
-                 "text": {"type": "plain_text", "text": "Ich bin dran"}}]
+ACKNOWLEDGEABLE_STATES = ("NEW", "IN_PROGRESS")
+
+
+def _finding_blocks(f: Finding, text: str | None = None) -> list[dict]:
+    """Section (``text`` or the finding line) plus buttons. Slack renders only the blocks when blocks are
+    given, so everything the reader must see belongs into ``text``."""
+    elements = []
+    if f.state in ACKNOWLEDGEABLE_STATES:  # „Ich bin dran“ is rejected in any other state
+        elements.append({"type": "button", "action_id": "ack", "value": str(f.id), "style": "primary",
+                         "text": {"type": "plain_text", "text": "Ich bin dran"}})
     base_url = getattr(settings, "PATCHBOT_BASE_URL", "")
     if base_url:
         elements.append({"type": "button", "action_id": "details", "url": f"{base_url}/?finding={f.id}",
                          "text": {"type": "plain_text", "text": "Details"}})
-    return [{"type": "section", "text": {"type": "mrkdwn", "text": _finding_line(f)}},
-            {"type": "actions", "block_id": f"finding-{f.id}", "elements": elements}]
+    blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": text or _finding_line(f)}}]
+    if elements:
+        blocks.append({"type": "actions", "block_id": f"finding-{f.id}", "elements": elements})
+    return blocks
 
 
 def _log_sent(findings: list[Finding], kind: str, stage: int, recipient: str, ts: str, now: datetime) -> None:
@@ -119,7 +128,7 @@ def escalate_overdue(*, slack, now: datetime | None = None) -> int:
         who = f"<@{f.assignee.slack_user_id}>" if f.assignee and f.assignee.slack_user_id else "niemand zugewiesen"
         text = f"⏰ Eskalation ({STAGE_LABEL[stage]}): {_finding_line(f)} · zuständig: {who}"
         try:
-            ts = slack.post_message(settings.SLACK_TEAM_CHANNEL_ID, text, _finding_blocks(f))
+            ts = slack.post_message(settings.SLACK_TEAM_CHANNEL_ID, text, _finding_blocks(f, text))
         except SlackError as exc:
             record_health("slack", False, str(exc), now)
             continue

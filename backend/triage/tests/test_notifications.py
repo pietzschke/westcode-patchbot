@@ -130,3 +130,32 @@ def test_sync_slack_user_ids(db):
     assert sync_slack_user_ids(slack=FakeSlack(users={"new@westcode.de": "UNEW"})) == 1
     member.refresh_from_db()
     assert member.slack_user_id == "UNEW"
+
+
+def _section_texts(blocks):
+    return " ".join(b["text"]["text"] for b in blocks if b["type"] == "section")
+
+
+def _action_ids(blocks):
+    return [el["action_id"] for b in blocks if b["type"] == "actions" for el in b["elements"]]
+
+
+def test_escalation_blocks_carry_header_and_mention(team):
+    a, _ = team
+    make_finding(state="NEW", assignee=a, deadline_at=datetime(2026, 11, 9, 7, 0, tzinfo=BER))
+    slack = FakeSlack()
+    escalate_overdue(slack=slack, now=MONDAY_9)
+    rendered = _section_texts(slack.messages[0][2])
+    assert "Eskalation (nicht bestätigt)" in rendered
+    assert "<@UA>" in rendered
+    assert "ack" in _action_ids(slack.messages[0][2])
+
+
+def test_escalation_after_merge_has_no_ack_button(team):
+    a, _ = team
+    make_finding(state="PR_MERGED_WAITING_LIVE", assignee=a, escalated_stage=2,
+                 deadline_at=datetime(2026, 11, 9, 7, 0, tzinfo=BER))
+    slack = FakeSlack()
+    assert escalate_overdue(slack=slack, now=MONDAY_9) == 1
+    assert "ack" not in _action_ids(slack.messages[0][2])
+    assert "nach Merge noch nicht live" in _section_texts(slack.messages[0][2])

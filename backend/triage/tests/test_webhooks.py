@@ -182,3 +182,22 @@ def test_reconciliation_refreshes_ci_status_of_open_prs():
     assert reconcile_open_prs(github=gh, now=NOW) == 0
     f.refresh_from_db()
     assert f.ci_status == "failure"
+
+
+@pytest.mark.django_db
+def test_reconciliation_survives_a_failing_pull_request():
+    broken = make_finding(state="IN_PROGRESS", pr_number=40, repository__full_name="westcoder/broken")
+    f = make_finding(state="IN_PROGRESS", pr_number=41, repository__full_name="westcoder/mdb")
+
+    class FlakyGitHub(FakeGitHub):
+        def get_pull(self, repo, number):
+            if repo == "westcoder/broken":
+                raise RuntimeError("GitHub 502")
+            return super().get_pull(repo, number)
+
+    gh = FlakyGitHub(pull_details={("westcoder/mdb", 41): {
+        "state": "closed", "merged": True, "merged_at": "2026-11-09T08:00:00Z", "merge_commit_sha": "m1"}})
+    assert reconcile_open_prs(github=gh, now=NOW) == 1
+    f.refresh_from_db()
+    broken.refresh_from_db()
+    assert (f.state, broken.state) == ("PR_MERGED_WAITING_LIVE", "IN_PROGRESS")

@@ -114,11 +114,13 @@ DEFAULT_HANDLERS: dict[str, Callable] = {
 def schedule_due_jobs(*, now: datetime | None = None) -> list[str]:
     now = now or timezone.now()
     last_runs = {s.kind: s.last_run_at for s in ScheduleState.objects.all()}
-    due = due_jobs(now, last_runs)
-    for kind in due:
-        enqueue(kind, {"trigger": "SCHEDULED"}, unique=True)
+    enqueued = []
+    for kind in due_jobs(now, last_runs):
+        if enqueue(kind, {"trigger": "SCHEDULED"}, unique=True) is None:
+            continue  # a run of this kind is still queued/running: stay due so the slot is not lost
         ScheduleState.objects.update_or_create(kind=kind, defaults={"last_run_at": now})
-    return due
+        enqueued.append(kind)
+    return enqueued
 
 
 def recover_stale_jobs(*, now: datetime | None = None) -> int:
@@ -182,6 +184,14 @@ def build_deps() -> Deps:
     """Production wiring from settings (GitHub App, repo cache, Trivy, Claude, Slack)."""
     from pathlib import Path
 
+    from django.core.exceptions import ImproperlyConfigured
+
+    key_path = settings.GITHUB_APP_PRIVATE_KEY_PATH
+    if not key_path or not Path(key_path).is_file():
+        raise ImproperlyConfigured(
+            f"GITHUB_APP_PRIVATE_KEY_PATH muss auf den Private Key der GitHub App zeigen (aktuell: {key_path!r})."
+        )
+
     from controlplane.clients import slack_client
     from inventory.github_app import GitHubApp, RestGitHubClient
     from research.bumper import Bumper
@@ -193,7 +203,7 @@ def build_deps() -> Deps:
     app = GitHubApp(
         app_id=settings.GITHUB_APP_ID,
         installation_id=settings.GITHUB_APP_INSTALLATION_ID,
-        private_key_pem=Path(settings.GITHUB_APP_PRIVATE_KEY_PATH).read_bytes(),
+        private_key_pem=Path(key_path).read_bytes(),
     )
     cache = RepoCache(Path(settings.PATCHBOT_REPO_CACHE), token_provider=app.installation_token)
     github = RestGitHubClient(app=app, checkout_provider=cache.as_checkout_provider())

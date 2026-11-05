@@ -186,6 +186,9 @@ def reconcile_open_prs(*, github, now: datetime | None = None) -> int:
     merged = 0
     for finding in Finding.objects.filter(state__in=("NEW", "IN_PROGRESS"), pr_number__isnull=False,
                                           repository__isnull=False).select_related("repository"):
-        if _apply_pull_state(finding, github, now):
-            merged += 1
+        try:
+            if _apply_pull_state(finding, github, now):
+                merged += 1
+        except Exception:  # noqa: BLE001 - one broken PR lookup must not stop the hourly reconciliation
+            logger.exception("Reconciling PR #%s of finding %s failed", finding.pr_number, finding.id)
     return merged

@@ -125,3 +125,25 @@ def test_signals_refresh_updates_parked_findings_and_reopens_on_new_kev(monkeypa
     assert filtered.state == "NEW"
     assert filtered.events.filter(from_state="FILTERED_IRRELEVANT", to_state="NEW").exists()
     assert Finding.objects.get(id=quiet.id).state == "FILTERED_IRRELEVANT"
+
+
+@pytest.mark.django_db
+def test_schedule_stamps_only_jobs_that_were_enqueued():
+    running = enqueue("daily_scan", {"trigger": "MANUAL"})
+    Job.objects.filter(id=running.id).update(status="RUNNING", locked_at=NOW)
+    assert "daily_scan" not in schedule_due_jobs(now=NOW)
+    assert not ScheduleState.objects.filter(kind="daily_scan").exists()
+    Job.objects.filter(id=running.id).update(status="DONE")
+    assert "daily_scan" in schedule_due_jobs(now=NOW + timedelta(minutes=1))
+    assert Job.objects.filter(kind="daily_scan", status="QUEUED").count() == 1
+
+
+@pytest.mark.parametrize("key_path", ["", "/nonexistent/github-app.pem"])
+def test_build_deps_without_github_key_fails_with_clear_error(settings, key_path):
+    from django.core.exceptions import ImproperlyConfigured
+
+    from controlplane.worker import build_deps
+
+    settings.GITHUB_APP_PRIVATE_KEY_PATH = key_path
+    with pytest.raises(ImproperlyConfigured, match="GITHUB_APP_PRIVATE_KEY_PATH"):
+        build_deps()

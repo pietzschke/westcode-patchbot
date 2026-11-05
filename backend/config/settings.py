@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-from config.checks import DEV_SECRET_KEY, validate_dev_login, validate_secret_key
+from config.checks import DEV_SECRET_KEY, validate_dev_login, validate_secret_key, validate_tenant_id
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -76,3 +76,12 @@ REST_FRAMEWORK = {
 PATCHBOT_DEV_LOGIN = os.environ.get("PATCHBOT_DEV_LOGIN") or None
 validate_dev_login(debug=DEBUG, flag=PATCHBOT_DEV_LOGIN)
 PATCHBOT_DEV_LOGIN_ENABLED = DEBUG and PATCHBOT_DEV_LOGIN == "1"
+
+# --- Microsoft Entra ID (single tenant) ---
+MICROSOFT_TENANT_ID = os.environ.get("MICROSOFT_TENANT_ID", "")
+MICROSOFT_CLIENT_ID = os.environ.get("MICROSOFT_CLIENT_ID", "")
+MICROSOFT_CLIENT_SECRET = os.environ.get("MICROSOFT_CLIENT_SECRET", "")
+MICROSOFT_REDIRECT_URI = os.environ.get("MICROSOFT_REDIRECT_URI", "")
+if MICROSOFT_TENANT_ID:
+    validate_tenant_id(MICROSOFT_TENANT_ID)
+LOGIN_REDIRECT_URL = "/"

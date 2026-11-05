@@ -1,5 +1,7 @@
 """Startup guards that refuse insecure production configurations."""
 
+import re
+
 from django.core.exceptions import ImproperlyConfigured
 
 DEV_SECRET_KEY = "westcode-patchbot-dev-secret-key"
@@ -17,3 +19,12 @@ def validate_secret_key(*, debug: bool, secret_key: str) -> None:
 def validate_dev_login(*, debug: bool, flag: str | None) -> None:
     if flag and not debug:
         raise ImproperlyConfigured("PATCHBOT_DEV_LOGIN is only allowed together with DJANGO_DEBUG=true.")
+
+
+_GUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
+
+def validate_tenant_id(tenant_id: str) -> None:
+    """Only a single, explicit tenant GUID is accepted (never common/organizations/consumers)."""
+    if not _GUID_RE.match(tenant_id or ""):
+        raise ImproperlyConfigured("MICROSOFT_TENANT_ID must be the Westcode tenant GUID.")

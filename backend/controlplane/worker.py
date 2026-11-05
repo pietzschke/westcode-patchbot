@@ -15,7 +15,7 @@ from inventory.models import TeamMember
 from inventory.notion_sync import sync_notion_projects
 from research.maintenance import request_analysis
 from research.models import MaintenanceUpdate
-from research.pipeline import lookup_image_scan, run_scan
+from research.pipeline import lookup_image_scan, record_trivy_db_health, run_scan
 from research.signals_feed import apply_signals, refresh_epss, refresh_kev
 from research.triage_ai import lift_filter_if_blocked
 from triage.dismissal import evaluate_reopen_rules
@@ -77,6 +77,8 @@ def _signals_refresh(job, d: Deps, now):
 
 
 def _grace_eval(job, d: Deps, now):
+    if d.trivy is not None:
+        record_trivy_db_health(d.trivy, now)  # clears/sets the Trivy-DB cause between daily scans
     verify_findings(github=d.github, image_scan_lookup=lookup_image_scan, now=now)
     evaluate_reopen_rules(now=now)
     send_new_finding_dms(slack=d.slack, now=now)

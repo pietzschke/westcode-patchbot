@@ -230,3 +230,22 @@ def test_epss_outage_does_not_fail_the_scan():
     run = scan(github=FakeGitHub(), slack=FakeSlack(), epss_fetch=fetch)
     assert run.status == "OK"
     assert Finding.objects.get().state == "NEW"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("db_status,ok", [(TrivyResult("FAILED", "Trivy-DB ist 75 h alt."), False),
+                                          (TrivyResult("OK", ""), True)])
+def test_scan_records_trivy_db_health(db_status, ok):
+    from controlplane.ampel import compute_ampel
+    from triage.models import IntegrationHealth
+
+    class CheckedTrivy(Trivy):
+        def db_status(self, now):
+            return db_status
+
+    make_repo(full_name="westcoder/mdb", project=make_project(slug="wuerth"))
+    scan(github=FakeGitHub(), slack=FakeSlack(), trivy=CheckedTrivy())
+    health = IntegrationHealth.objects.get(name="trivy")
+    assert health.ok is ok
+    causes = [c["text"] for c in compute_ampel(now=NOW)["causes"]]
+    assert ("trivy: Trivy-DB ist 75 h alt." in causes) is not ok

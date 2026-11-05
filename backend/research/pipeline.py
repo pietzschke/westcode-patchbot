@@ -35,6 +35,15 @@ def lookup_image_scan(digest_ref: str) -> dict | None:
     return {"status": cached.status, "vulnerabilities": cached.vulnerabilities} if cached else None
 
 
+def record_trivy_db_health(trivy, now: datetime) -> None:
+    """Surface a stale/missing Trivy DB as integration „trivy“ (→ Ampel GREY) instead of scanning silently."""
+    check = getattr(trivy, "db_status", None)
+    if check is None:
+        return
+    status = check(now)
+    record_health("trivy", status.status == "OK", status.error, now)
+
+
 def refresh_missing_epss(findings, fetch: Callable[[list[str]], dict] | None = None) -> int:
     """Fetch EPSS for CVEs that have no score yet, so the policy gate never sees a default 0.0 for a CVE
     discovered after the 06:30 signals refresh (KEV comes from the daily catalogue). Failure-tolerant."""
@@ -76,6 +85,7 @@ def run_scan(
             raise
         link_containers_to_repositories()
         suggest_projects()
+        record_trivy_db_health(trivy, now)
         result = collect_and_upsert(run, github=github, trivy=trivy, now=now)
 
         refresh_missing_epss(result.findings, fetch=epss_fetch)

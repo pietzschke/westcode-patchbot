@@ -84,6 +84,8 @@ class Finding(models.Model):
     dismissed_kev_listed = models.BooleanField(default=False)
     snoozed_until = models.DateTimeField(null=True, blank=True)
     manual_runbook = models.TextField(blank=True, default="")
+    verification_snapshot = models.JSONField(default=list, blank=True)
+    verification_checked_at = models.DateTimeField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -160,3 +162,21 @@ class WebhookEvent(models.Model):
 
     class Meta:
         ordering = ["received_at", "id"]
+
+
+class Job(models.Model):
+    """DB-backed job queue processed by the worker (scans, syncs, analyses)."""
+
+    kind = models.CharField(max_length=32)
+    payload = models.JSONField(default=dict, blank=True)
+    status = models.CharField(max_length=16, default="QUEUED")  # QUEUED | RUNNING | DONE | FAILED
+    run_after = models.DateTimeField()
+    locked_at = models.DateTimeField(null=True, blank=True)
+    attempts = models.IntegerField(default=0)
+    last_error = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["run_after", "id"]
+        indexes = [models.Index(fields=["status", "run_after"])]

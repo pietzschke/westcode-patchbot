@@ -100,8 +100,15 @@ def _verify(finding: Finding, now: datetime, note: str) -> None:
     log_event(finding, source="SYSTEM", from_state=previous, to_state="VERIFIED_LIVE", note=note, at=now)
 
 
+def _snapshot(rows: list[dict]) -> list[dict]:
+    return [{k: (v.isoformat() if isinstance(v, datetime) else v) for k, v in row.items()} for row in rows]
+
+
 def _verify_application(finding: Finding, github, lookup, now) -> bool:
     rows = verification_rows(finding, github=github, image_scan_lookup=lookup)
+    finding.verification_snapshot = _snapshot(rows)
+    finding.verification_checked_at = now
+    finding.save(update_fields=["verification_snapshot", "verification_checked_at", "updated_at"])
     if not rows or not all(r["fresh"] and r["proof"] for r in rows):
         return False
     proofs = ", ".join(f"{r['host']}: {r['proof']}" for r in rows)

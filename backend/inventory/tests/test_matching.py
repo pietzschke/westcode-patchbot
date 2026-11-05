@@ -76,3 +76,12 @@ def test_confirm_suggestion_assigns_and_clears():
     repo.refresh_from_db()
     assert repo.project == wuerth
     assert repo.suggested_project is None
+
+
+@pytest.mark.django_db
+def test_unassigned_containers_get_suggestions():
+    wuerth = make_project(slug="wuerth")
+    container = make_container(make_host(slug="x1"), compose_service="materialdatenbank")
+    suggest_projects()
+    container.refresh_from_db()
+    assert (container.suggested_project, container.project) == (wuerth, None)

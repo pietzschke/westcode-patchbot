@@ -66,6 +66,9 @@ class HostContainer(models.Model):
     project = models.ForeignKey(
         "inventory.Project", null=True, blank=True, on_delete=models.SET_NULL, related_name="containers"
     )
+    suggested_project = models.ForeignKey(
+        "inventory.Project", null=True, blank=True, on_delete=models.SET_NULL, related_name="suggested_containers"
+    )
     repository = models.ForeignKey(
         "inventory.RepositoryAsset",
         null=True,

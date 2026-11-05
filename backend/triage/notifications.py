@@ -40,9 +40,11 @@ def record_health(name: str, ok: bool, error: str = "", now: datetime | None = N
 
 
 def _finding_line(f: Finding) -> str:
-    cves = ", ".join(f.vulnerability_ids[:2]) or f.package_name
     kind = "Einfacher Fix" if f.complexity == "SIMPLE" else "Komplexer Eingriff"
     deadline = timezone.localtime(f.deadline_at).strftime("%d.%m. %H:%M") if f.deadline_at else "–"
+    if f.package_name == "__os_eol__":
+        return f"*{f.project.name}* · {f.display_title} ({f.highest_severity}) · {kind} · Frist {deadline}"
+    cves = ", ".join(f.vulnerability_ids[:2]) or f.package_name
     return f"*{f.project.name}* · `{f.package_name}` → {f.target_version or '–'} · {cves} ({f.highest_severity}) · {kind} · Frist {deadline}"
 
 

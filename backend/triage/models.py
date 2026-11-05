@@ -110,6 +110,13 @@ class Finding(models.Model):
     def is_open(self) -> bool:
         return self.state in OPEN_STATES
 
+    @property
+    def display_title(self) -> str:
+        """Human-readable name: the OS end-of-life pseudo package gets a German label."""
+        if self.package_name == "__os_eol__":
+            return f"Betriebssystem-EOL: {self.ecosystem.capitalize()} {self.current_version} → {self.target_version}"
+        return f"{self.package_name} {self.target_version}".strip()
+
 
 class FindingEvent(models.Model):
     finding = models.ForeignKey(Finding, on_delete=models.CASCADE, related_name="events")

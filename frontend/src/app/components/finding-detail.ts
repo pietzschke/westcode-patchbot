@@ -2,6 +2,7 @@ import { HttpErrorResponse } from '@angular/common/http';
 import { Component, computed, effect, inject, input, output, signal } from '@angular/core';
 import { Observable, Subscription } from 'rxjs';
 import { apiErrorText } from '../core/api-error';
+import { findingSubline } from '../core/finding-text';
 import { DismissPayload, FindingDetailDto, PatchbotApi, VerificationRowDto } from '../core/patchbot-api';
 
 const STATE_LABELS: Record<string, string> = {
@@ -40,7 +41,7 @@ type DismissChoice = 'DISMISSED' | 'SNOOZED_14' | 'SNOOZED_30';
             }
           </div>
           <h2 class="plan-title" id="detail-title">{{ f.title }}</h2>
-          <div class="plan-meta">{{ f.project.name }} · {{ f.vulnerability_ids.join(', ') }}</div>
+          <div class="plan-meta">{{ subline(f) }}</div>
 
           <div class="plan-block">
             <div class="plan-block-title"><span>Status</span></div>
@@ -221,6 +222,7 @@ export class FindingDetail {
   readonly changed = output<FindingDetailDto>();
 
   readonly detail = signal<FindingDetailDto | null>(null);
+  readonly subline = findingSubline;
   readonly busy = signal(false);
   readonly error = signal('');
   readonly loadError = signal('');

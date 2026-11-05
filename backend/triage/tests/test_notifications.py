@@ -215,3 +215,14 @@ def test_successful_user_sync_clears_slack_failure(db):
     record_health("slack", False, "users.lookupByEmail: invalid_auth")
     sync_slack_user_ids(slack=FakeSlack(users={"new@westcode.de": "UNEW"}))
     assert IntegrationHealth.objects.get(name="slack").ok is True
+
+
+@pytest.mark.django_db
+def test_os_eol_dm_line_is_readable():
+    from triage.notifications import _finding_line
+
+    f = make_finding(layer="INFRASTRUCTURE", ecosystem="ubuntu", package_name="__os_eol__",
+                     current_version="20.04", target_version="24.04", vulnerability_ids=[])
+    line = _finding_line(f)
+    assert "__os_eol__" not in line
+    assert "Betriebssystem-EOL: Ubuntu 20.04 → 24.04" in line

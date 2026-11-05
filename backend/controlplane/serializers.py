@@ -37,7 +37,7 @@ def finding_summary(f: Finding, now: datetime | None = None) -> dict:
     now = now or timezone.now()
     return {
         "id": f.id,
-        "title": f"{f.package_name} {f.target_version}".strip(),
+        "title": f.display_title,
         "project": project_ref(f.project),
         "layer": f.layer,
         "target_ref": f.target_ref,

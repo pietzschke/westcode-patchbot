@@ -34,7 +34,7 @@ const DASHBOARD: DashboardDto = {
   me_id: 7,
 };
 
-function setup() {
+function setup(data: DashboardDto = DASHBOARD) {
   TestBed.configureTestingModule({
     imports: [TriageDashboard],
     providers: [provideHttpClient(), provideHttpClientTesting()],
@@ -42,7 +42,7 @@ function setup() {
   const http = TestBed.inject(HttpTestingController);
   const fixture = TestBed.createComponent(TriageDashboard);
   fixture.detectChanges();
-  http.expectOne('/api/dashboard/').flush(DASHBOARD);
+  http.expectOne('/api/dashboard/').flush(data);
   fixture.detectChanges();
   return { fixture, el: fixture.nativeElement as HTMLElement };
 }
@@ -111,6 +111,20 @@ describe('TriageDashboard', () => {
     expect(heads).toEqual(['SES Sandmann', 'Würth']);
   });
 
+  it('shows the host instead of an empty CVE list and keeps the columns aligned', () => {
+    const eol = finding({
+      id: 3, title: 'Betriebssystem-EOL: Ubuntu 20.04 → 24.04', layer: 'INFRASTRUCTURE',
+      target_ref: 'host:shop-prod-01', package_name: '__os_eol__', vulnerability_ids: [],
+    });
+    const withPr = finding({ id: 4, pr: { number: 12, url: '', draft: true, source: 'PATCHBOT', ci_status: '' } });
+    const { el } = setup({ ...DASHBOARD, buckets: { simple: [eol, withPr], complex: [], waiting_live: [] } });
+    const rows = el.querySelectorAll('.finding-row');
+    expect(rows[0].querySelector('.finding-sub')?.textContent?.trim()).toBe('Würth · shop-prod-01');
+    // Every row renders the same four grid cells, so assignee and deadline line up with and without a PR.
+    expect(rows[0].children.length).toBe(4);
+    expect(rows[1].children.length).toBe(4);
+    expect(rows[1].querySelector('.finding-title .pr-badge')?.textContent).toContain('PR #12 · Draft');
+  });
   it('selects a finding on row click', () => {
     const { fixture, el } = setup();
     click(fixture, el, '.finding-row');

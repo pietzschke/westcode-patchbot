@@ -404,6 +404,9 @@ body {
   cursor: pointer;
 }
 .maintenance-row { grid-template-columns: 1fr auto auto auto; cursor: default; }
+/* Four fixed columns: the PR badge sits in the title line, so assignee and deadline line up in every row. */
+.finding-row { grid-template-columns: 5.5rem minmax(0, 1fr) 8rem 8rem; }
+.finding-title .kev-badge, .finding-title .pr-badge { margin-left: 0.35rem; vertical-align: 2px; }
 .finding-row:hover, .finding-row.selected { background: var(--bluefly-50); }
 .finding-title { font-weight: 600; }
 .finding-sub { font-size: 0.75rem; color: var(--neutral-600); }

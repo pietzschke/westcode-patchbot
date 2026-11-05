@@ -2,6 +2,7 @@ import { NgTemplateOutlet } from '@angular/common';
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { AmpelBanner } from '../components/ampel-banner';
 import { FindingDetail } from '../components/finding-detail';
+import { findingSubline } from '../core/finding-text';
 import { DashboardDto, FindingDto, PatchbotApi } from '../core/patchbot-api';
 
 type Mode = 'security' | 'maintenance' | 'filtered';
@@ -189,14 +190,14 @@ const DATE_FMT = new Intl.DateTimeFormat('de-DE', {
               @if (f.kev_listed) {
                 <span class="kev-badge" title="Aktiv ausgenutzt (CISA KEV)">KEV</span>
               }
+              @if (f.pr) {
+                <span class="pr-badge">PR #{{ f.pr.number }}{{ f.pr.draft ? ' · Draft' : '' }}</span>
+              }
             </div>
-            <div class="finding-sub">{{ f.project.name }} · {{ f.vulnerability_ids.join(', ') }}</div>
+            <div class="finding-sub">{{ subline(f) }}</div>
           </div>
           <div class="finding-assignee">{{ f.assignee?.name ?? 'Nicht zugewiesen' }}</div>
           <div class="finding-deadline" [class.crit]="f.overdue">{{ deadlineText(f) }}</div>
-          @if (f.pr) {
-            <span class="pr-badge">PR #{{ f.pr.number }}{{ f.pr.draft ? ' · Draft' : '' }}</span>
-          }
         </li>
       </ng-template>
     </main>
@@ -212,6 +213,7 @@ export class TriageDashboard implements OnInit {
   readonly severityFilters = SEVERITY_FILTERS;
   readonly minSeverity = signal('');
   readonly selectedId = signal<number | null>(null);
+  readonly subline = findingSubline;
   readonly notice = signal('');
 
   readonly projectGroups = computed(() => {

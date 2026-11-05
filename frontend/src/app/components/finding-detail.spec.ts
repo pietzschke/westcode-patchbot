@@ -134,4 +134,40 @@ describe('FindingDetail', () => {
     fixture.detectChanges();
     expect(el.querySelector('.action-error')?.textContent).toContain('Kaputt');
   });
+
+  it('shows list-shaped DRF validation errors', () => {
+    const { el, http, click, type, fixture } = setup(detail());
+    click('#dismiss-open');
+    type('#dismiss-reason', 'Nur im Build-Container genutzt.');
+    click('#dismiss-submit');
+    http.expectOne('/api/findings/1/dismiss/').flush(
+      { detail: ['Begründung ist zu kurz.'] }, { status: 400, statusText: 'Bad Request' },
+    );
+    fixture.detectChanges();
+    expect(el.querySelector('.action-error')?.textContent).toContain('Begründung ist zu kurz.');
+  });
+
+  it('ignores the response of a previously selected finding', () => {
+    const { el, http, fixture } = setup(detail());
+    fixture.componentRef.setInput('findingId', 2);
+    fixture.detectChanges();
+    fixture.componentRef.setInput('findingId', 3);
+    fixture.detectChanges();
+    const stale = http.expectOne('/api/findings/2/');
+    const current = http.expectOne('/api/findings/3/');
+    expect(stale.cancelled).toBe(true);
+    current.flush(detail({ id: 3, title: 'django 6.0.1' }));
+    fixture.detectChanges();
+    expect(el.querySelector('#detail-title')?.textContent).toContain('django 6.0.1');
+  });
+
+  it('shows an error instead of loading forever when the detail request fails', () => {
+    const { el, http, fixture } = setup(detail());
+    fixture.componentRef.setInput('findingId', 2);
+    fixture.detectChanges();
+    http.expectOne('/api/findings/2/').flush({ detail: 'Nicht gefunden.' }, { status: 404, statusText: 'Not Found' });
+    fixture.detectChanges();
+    expect(el.textContent).not.toContain('Lade Details…');
+    expect(el.querySelector('.load-error')?.textContent).toContain('Nicht gefunden.');
+  });
 });

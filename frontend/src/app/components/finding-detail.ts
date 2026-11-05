@@ -1,6 +1,7 @@
 import { HttpErrorResponse } from '@angular/common/http';
 import { Component, computed, effect, inject, input, output, signal } from '@angular/core';
-import { Observable } from 'rxjs';
+import { Observable, Subscription } from 'rxjs';
+import { apiErrorText } from '../core/api-error';
 import { DismissPayload, FindingDetailDto, PatchbotApi, VerificationRowDto } from '../core/patchbot-api';
 
 const STATE_LABELS: Record<string, string> = {
@@ -205,6 +206,8 @@ type DismissChoice = 'DISMISSED' | 'SNOOZED_14' | 'SNOOZED_30';
               }
             </ol>
           </div>
+        } @else if (loadError()) {
+          <p class="action-error load-error" role="alert">{{ loadError() }}</p>
         } @else {
           <div class="plan-meta">Lade Details…</div>
         }
@@ -220,6 +223,7 @@ export class FindingDetail {
   readonly detail = signal<FindingDetailDto | null>(null);
   readonly busy = signal(false);
   readonly error = signal('');
+  readonly loadError = signal('');
   readonly dismissOpen = signal(false);
   readonly dismissChoice = signal<DismissChoice>('DISMISSED');
   readonly dismissReason = signal('');
@@ -230,13 +234,26 @@ export class FindingDetail {
   readonly canReopen = computed(() => REOPENABLE.includes(this.detail()?.state ?? ''));
   readonly dismissValid = computed(() => this.dismissReason().trim().length >= MIN_REASON);
   readonly extendValid = computed(() => this.extendReason().trim().length >= MIN_REASON);
+  private action: Subscription | null = null;
 
   constructor() {
-    effect(() => {
+    effect((onCleanup) => {
       const id = this.findingId();
       this.detail.set(null);
+      this.loadError.set('');
       this.resetForms();
-      this.api.getFinding(id).subscribe((d) => this.detail.set(d));
+      const load = this.api.getFinding(id).subscribe({
+        next: (d) => this.detail.set(d),
+        error: (err: HttpErrorResponse) =>
+          this.loadError.set(apiErrorText(err, 'Details konnten nicht geladen werden. Bitte erneut versuchen.')),
+      });
+      // A newer selection supersedes the pending load and any in-flight action of the previous finding.
+      onCleanup(() => {
+        load.unsubscribe();
+        this.action?.unsubscribe();
+        this.action = null;
+        this.busy.set(false);
+      });
     });
   }
 
@@ -295,7 +312,8 @@ export class FindingDetail {
   private run(request: Observable<FindingDetailDto>): void {
     this.busy.set(true);
     this.error.set('');
-    request.subscribe({
+    this.action?.unsubscribe();
+    this.action = request.subscribe({
       next: (d) => {
         this.busy.set(false);
         this.detail.set(d);
@@ -304,8 +322,7 @@ export class FindingDetail {
       },
       error: (err: HttpErrorResponse) => {
         this.busy.set(false);
-        const detail = err.error?.detail;
-        this.error.set(typeof detail === 'string' ? detail : 'Aktion fehlgeschlagen. Bitte erneut versuchen.');
+        this.error.set(apiErrorText(err, 'Aktion fehlgeschlagen. Bitte erneut versuchen.'));
       },
     });
   }

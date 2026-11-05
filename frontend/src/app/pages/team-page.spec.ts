@@ -9,7 +9,7 @@ import { MeDto, TeamMemberDto } from '../core/patchbot-api';
 const TEAM: TeamMemberDto[] = [
   {
     id: 7, name: 'Moritz Pietzschke', email: 'moritz.pietzschke@westcode.de', github_username: 'mpietzschke',
-    git_commit_emails: [], slack_user_id: 'U07', layers: ['infrastructure', 'application'],
+    git_commit_emails: ['12345+mpietzschke@users.noreply.github.com'], slack_user_id: 'U07', layers: ['infrastructure', 'application'],
     is_default_infra_owner: true, is_admin: true, is_active: true,
   },
   {
@@ -102,7 +102,7 @@ describe('TeamPage', () => {
     const req = http.expectOne((r) => r.method === 'POST' && r.url === '/api/team/');
     expect(req.request.body).toEqual({
       name: 'Neu Kollege', email: 'neu.kollege@westcode.de', github_username: 'neukollege', slack_user_id: null,
-      layers: ['application'], is_admin: true, is_default_infra_owner: false, is_active: true,
+      git_commit_emails: [], layers: ['application'], is_admin: true, is_default_infra_owner: false, is_active: true,
     });
     req.flush({ ...TEAM[1], id: 11, name: 'Neu Kollege' }, { status: 201, statusText: 'Created' });
     http.expectOne((r) => r.method === 'GET' && r.url === '/api/team/').flush([...TEAM, { ...TEAM[1], id: 11, name: 'Neu Kollege' }]);
@@ -125,8 +125,37 @@ describe('TeamPage', () => {
     expect(req.request.method).toBe('PATCH');
     expect(req.request.body).toEqual({
       name: 'Anna Beispiel', email: 'anna.beispiel@westcode.de', github_username: null, slack_user_id: 'U09',
-      layers: ['infrastructure', 'application'], is_admin: true, is_default_infra_owner: true, is_active: true,
+      git_commit_emails: [], layers: ['infrastructure', 'application'], is_admin: true, is_default_infra_owner: true, is_active: true,
     });
+  });
+
+  it('shows the git commit e-mail aliases in the directory', () => {
+    const { el } = setup();
+    expect(el.querySelectorAll<HTMLElement>('.team-row')[0].textContent).toContain('12345+mpietzschke@users.noreply.github.com');
+  });
+
+  it('edits the git commit e-mail aliases', () => {
+    const { fixture, http, el } = setup();
+    el.querySelectorAll<HTMLElement>('.team-row')[0].querySelector<HTMLButtonElement>('.edit-btn')!.click();
+    fixture.detectChanges();
+    const input = el.querySelector<HTMLInputElement>('.member-form input[name="git_commit_emails"]')!;
+    expect(input.value).toBe('12345+mpietzschke@users.noreply.github.com');
+    type(fixture, 'git_commit_emails', '12345+mpietzschke@users.noreply.github.com,  Moritz@Privat.de; m@old.de');
+    submit(fixture);
+    const req = http.expectOne('/api/team/7/');
+    expect(req.request.body.git_commit_emails).toEqual([
+      '12345+mpietzschke@users.noreply.github.com', 'moritz@privat.de', 'm@old.de',
+    ]);
+  });
+
+  it('rejects git commit aliases that are not e-mail addresses', () => {
+    const { fixture, http, el } = setup();
+    el.querySelectorAll<HTMLElement>('.team-row')[1].querySelector<HTMLButtonElement>('.edit-btn')!.click();
+    fixture.detectChanges();
+    type(fixture, 'git_commit_emails', 'anna, anna@privat.de');
+    submit(fixture);
+    http.expectNone('/api/team/9/');
+    expect(el.querySelector('.member-form .action-error')?.textContent).toContain('anna');
   });
 
   it('shows API validation errors', () => {

@@ -236,6 +236,13 @@ MEMBER_FIELDS = ("name", "email", "github_username", "git_commit_emails", "slack
                  "is_default_infra_owner", "is_admin", "is_active")
 
 
+def _commit_emails(value) -> list[str]:
+    """Git author addresses used for blame-based ownership: a de-duplicated, lower-cased list."""
+    if not isinstance(value, list) or not all(isinstance(e, str) and "@" in e.strip() for e in value):
+        raise ValidationError({"git_commit_emails": "Erwartet wird eine Liste von E-Mail-Adressen."})
+    return list(dict.fromkeys(e.strip().lower() for e in value))
+
+
 def _apply_member(member: TeamMember, data) -> None:
     for field in MEMBER_FIELDS:
         if field in data:
@@ -248,6 +255,7 @@ def _apply_member(member: TeamMember, data) -> None:
         raise ValidationError({"email": "Nur @westcode.de-Adressen sind erlaubt."})
     if not isinstance(member.layers, list) or not set(member.layers) <= set(LAYER_CHOICES):
         raise ValidationError({"layers": f"Erlaubt sind {list(LAYER_CHOICES)}."})
+    member.git_commit_emails = _commit_emails(member.git_commit_emails)
     member.full_clean(exclude=["user"])
     member.save()
 

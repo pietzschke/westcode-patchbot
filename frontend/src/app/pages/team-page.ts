@@ -15,6 +15,7 @@ interface MemberDraft {
   name: string;
   email: string;
   github_username: string;
+  git_commit_emails: string;
   slack_user_id: string;
   layers: string[];
   is_admin: boolean;
@@ -23,7 +24,12 @@ interface MemberDraft {
 }
 
 type DraftFlag = 'is_admin' | 'is_default_infra_owner' | 'is_active';
-type DraftText = 'name' | 'email' | 'github_username' | 'slack_user_id';
+type DraftText = 'name' | 'email' | 'github_username' | 'git_commit_emails' | 'slack_user_id';
+
+/** Splits the comma/semicolon/space separated alias field into lower-cased, de-duplicated addresses. */
+function parseCommitEmails(value: string): string[] {
+  return [...new Set(value.split(/[\s,;]+/).map((e) => e.trim().toLowerCase()).filter(Boolean))];
+}
 
 @Component({
   selector: 'app-team-page',
@@ -62,6 +68,12 @@ type DraftText = 'name' | 'email' | 'github_username' | 'slack_user_id';
               GitHub-Benutzer
               <input name="github_username" type="text" [value]="d.github_username"
                 (input)="setText('github_username', $any($event.target).value)" />
+            </label>
+            <label>
+              Git-Commit-E-Mails (für Blame-Zuordnung, kommagetrennt)
+              <input name="git_commit_emails" type="text" [value]="d.git_commit_emails"
+                placeholder="z. B. 12345+name&#64;users.noreply.github.com"
+                (input)="setText('git_commit_emails', $any($event.target).value)" />
             </label>
             <label>
               Slack-User-ID
@@ -107,6 +119,7 @@ type DraftText = 'name' | 'email' | 'github_username' | 'slack_user_id';
             <th>Name</th>
             <th>E-Mail</th>
             <th>GitHub</th>
+            <th>Git-Commit-E-Mails</th>
             <th>Slack</th>
             <th>Ebenen</th>
             <th>Rollen</th>
@@ -121,6 +134,7 @@ type DraftText = 'name' | 'email' | 'github_username' | 'slack_user_id';
               <td><strong>{{ m.name }}</strong></td>
               <td>{{ m.email }}</td>
               <td>{{ m.github_username ?? '—' }}</td>
+              <td class="commit-emails">{{ m.git_commit_emails.join(', ') || '—' }}</td>
               <td>{{ m.slack_user_id ?? '—' }}</td>
               <td>{{ layerLabels(m) }}</td>
               <td>
@@ -142,7 +156,7 @@ type DraftText = 'name' | 'email' | 'github_username' | 'slack_user_id';
               }
             </tr>
           } @empty {
-            <tr><td colspan="7" class="empty-state">Noch keine Teammitglieder angelegt.</td></tr>
+            <tr><td colspan="8" class="empty-state">Noch keine Teammitglieder angelegt.</td></tr>
           }
         </tbody>
       </table>
@@ -175,7 +189,7 @@ export class TeamPage implements OnInit {
   startCreate(): void {
     this.formError.set('');
     this.draft.set({
-      id: null, name: '', email: '', github_username: '', slack_user_id: '', layers: [],
+      id: null, name: '', email: '', github_username: '', git_commit_emails: '', slack_user_id: '', layers: [],
       is_admin: false, is_default_infra_owner: false, is_active: true,
     });
   }
@@ -184,6 +198,7 @@ export class TeamPage implements OnInit {
     this.formError.set('');
     this.draft.set({
       id: m.id, name: m.name, email: m.email, github_username: m.github_username ?? '',
+      git_commit_emails: m.git_commit_emails.join(', '),
       slack_user_id: m.slack_user_id ?? '', layers: [...m.layers], is_admin: m.is_admin,
       is_default_infra_owner: m.is_default_infra_owner, is_active: m.is_active,
     });
@@ -232,11 +247,18 @@ export class TeamPage implements OnInit {
       this.formError.set('Nur @westcode.de-Adressen sind erlaubt.');
       return;
     }
+    const commitEmails = parseCommitEmails(d.git_commit_emails);
+    const invalid = commitEmails.filter((e) => !e.includes('@'));
+    if (invalid.length) {
+      this.formError.set(`Keine gültige Git-Commit-E-Mail: ${invalid.join(', ')}`);
+      return;
+    }
     const payload: Partial<TeamMemberDto> = {
       name,
       email,
       github_username: d.github_username.trim() || null,
       slack_user_id: d.slack_user_id.trim() || null,
+      git_commit_emails: commitEmails,
       layers: d.layers,
       is_admin: d.is_admin,
       is_default_infra_owner: d.is_default_infra_owner,

@@ -114,3 +114,29 @@ def test_factory_supports_related_field_shortcuts(db):
     f = make_finding(repository__deployment_mode="NONE", repository__full_name="westcoder/lib")
     assert (f.repository.full_name, f.repository.deployment_mode) == ("westcoder/lib", "NONE")
     assert f.repository.project == f.project
+
+
+def test_new_cve_with_higher_target_moves_waiting_finding_back_to_work(repo):
+    f = upsert_finding(cand(repo, Vuln("CVE-2026-0001", "HIGH", "4.17.19")), now=NOW).finding
+    f.state, f.acknowledged_at, f.triage_status = "PR_MERGED_WAITING_LIVE", NOW, "TRIAGED"
+    f.merge_commit_sha, f.pr_merged_at, f.pr_number, f.pr_url, f.pr_source = "m1", NOW, 7, "https://x/7", "PATCHBOT"
+    f.escalated_stage = 3
+    f.save()
+    later = datetime(2026, 11, 9, 7, 0, tzinfo=BER)  # Monday
+    result = upsert_finding(cand(repo, Vuln("CVE-2026-0002", "HIGH", "4.17.21")), now=later)
+    f.refresh_from_db()
+    assert result.target_version_raised is True
+    assert (f.state, f.triage_status, f.target_version) == ("IN_PROGRESS", "UNTRIAGED", "4.17.21")
+    assert (f.merge_commit_sha, f.pr_merged_at, f.pr_number, f.pr_url, f.pr_source) == ("", None, None, "", "")
+    assert f.escalated_stage == 1
+    assert f.deadline_at > later
+    assert f.events.filter(from_state="PR_MERGED_WAITING_LIVE", to_state="IN_PROGRESS").exists()
+
+
+def test_rescan_with_same_cves_keeps_waiting_finding(repo):
+    f = upsert_finding(cand(repo, Vuln("CVE-2026-0001", "HIGH", "4.17.19")), now=NOW).finding
+    f.state, f.acknowledged_at, f.merge_commit_sha, f.pr_merged_at = "PR_MERGED_WAITING_LIVE", NOW, "m1", NOW
+    f.save()
+    upsert_finding(cand(repo, Vuln("CVE-2026-0001", "HIGH", "4.17.19")), now=NOW)
+    f.refresh_from_db()
+    assert (f.state, f.merge_commit_sha) == ("PR_MERGED_WAITING_LIVE", "m1")

@@ -84,6 +84,37 @@ def reopen_state(finding: Finding, now: datetime) -> str:
     return finding.state
 
 
+def return_to_work(finding: Finding, *, now: datetime, note: str) -> None:
+    """A merged fix does not cover the cluster (new CVE / CVE still on the merged branch): leave
+    PR_MERGED_WAITING_LIVE before live verification can close it on the old merge commit (spec §2 Anti-Goal 4).
+
+    The merge and PR data are cleared so a new PR for the current target version is prepared and the old
+    merged PR cannot move the finding back; triage runs again for the new target version."""
+    previous = finding.state
+    finding.merge_commit_sha = ""
+    finding.pr_merged_at = None
+    finding.pr_number, finding.pr_url, finding.pr_source, finding.pr_is_draft = None, "", "", False
+    finding.ci_status = ""
+    finding.verification_snapshot = []
+    finding.verification_checked_at = None
+    finding.triage_status = "UNTRIAGED"
+    finding.extended_in_stage = ""
+    if finding.acknowledged_at is not None:
+        finding.state = "IN_PROGRESS"
+        finding.deadline_at = deadline_for(
+            stage="IN_PROGRESS",
+            complexity=finding.complexity,
+            severity=finding.highest_severity,
+            kev_listed=finding.kev_listed,
+            start=now,
+        )
+        finding.escalated_stage = min(finding.escalated_stage, 1)  # stage 2 (IN_PROGRESS) may escalate again
+    else:
+        _start_new(finding, now)
+    finding.save()
+    log_event(finding, source="SYSTEM", from_state=previous, to_state=finding.state, note=note, at=now)
+
+
 @transaction.atomic
 def upsert_finding(candidate: Candidate, *, now: datetime | None = None) -> UpsertResult:
     now = now or timezone.now()
@@ -104,6 +135,9 @@ def upsert_finding(candidate: Candidate, *, now: datetime | None = None) -> Upse
         if raised:
             log_event(open_finding, source="SYSTEM", from_state=open_finding.state, to_state=open_finding.state,
                       note=f"Zielversion auf {open_finding.target_version} angehoben (neue CVE).", at=now)
+            if open_finding.state == "PR_MERGED_WAITING_LIVE":
+                return_to_work(open_finding, now=now, note=(
+                    f"Der gemergte Fix reicht nicht: neue CVE erfordert {open_finding.target_version}."))
         return UpsertResult(open_finding, target_version_raised=raised)
 
     parked = same_key.filter(state__in=PARKED_STATES).order_by("-id").first()

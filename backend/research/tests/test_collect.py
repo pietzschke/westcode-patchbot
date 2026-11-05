@@ -161,3 +161,21 @@ def test_stale_host_is_a_failed_target_without_new_findings():
     run, _ = run_collect()
     assert TargetScan.objects.get(scan_run=run, target_type="HOST").status == "FAILED"
     assert not Finding.objects.filter(host=host).exists()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("relation,expected", [("ahead", "IN_PROGRESS"), ("identical", "IN_PROGRESS"),
+                                               ("behind", "PR_MERGED_WAITING_LIVE")])
+def test_cve_still_present_after_merge_reopens_waiting_finding(relation, expected):
+    repo = make_repo(full_name="westcoder/mdb", project=make_project(slug="wuerth"))
+    f = make_finding(repository=repo, state="PR_MERGED_WAITING_LIVE", ecosystem="npm", package_name="lodash",
+                     vulnerability_ids=["CVE-2026-0001"], target_version="4.17.21", merge_commit_sha="m1",
+                     pr_merged_at=NOW - timedelta(hours=2), acknowledged_at=NOW - timedelta(hours=3), pr_number=7)
+    head = "m1" if relation == "identical" else "h2"
+    gh = FakeGitHub(head_shas={"westcoder/mdb": head}, compare={("westcoder/mdb", "m1", "h2"): relation})
+    _, result = run_collect(github=gh, trivy=FakeTrivy(fs={"westcoder/mdb": TrivyResult("OK", "", [LODASH])}))
+    f.refresh_from_db()
+    assert f.state == expected
+    if expected == "IN_PROGRESS":
+        assert (f.merge_commit_sha, f.pr_number, f.triage_status) == ("", None, "UNTRIAGED")
+        assert [x.state for x in result.findings] == ["IN_PROGRESS"]

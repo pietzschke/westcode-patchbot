@@ -16,9 +16,10 @@ from research.models import ImageScanCache
 from research.scan_runs import record_target
 from research.trivy import TrivyResult
 from triage.candidates import Candidate, Vuln
-from triage.findings import upsert_finding
+from triage.findings import UpsertResult, return_to_work, upsert_finding
 from triage.lifecycle import mark_fix_detected_on_branch
 from triage.models import Finding
+from triage.verification import CONTAINS_MERGE
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,7 @@ def _ms(start: float) -> int:
     return int((time.monotonic() - start) * 1000)
 
 
-def _record_upsert(result: CollectResult, candidate: Candidate, now: datetime) -> None:
+def _record_upsert(result: CollectResult, candidate: Candidate, now: datetime) -> UpsertResult:
     outcome = upsert_finding(candidate, now=now)
     if outcome.muted:
         result.muted += 1
@@ -51,6 +52,15 @@ def _record_upsert(result: CollectResult, candidate: Candidate, now: datetime) -
         result.updated += 1
     if not outcome.muted:
         result.findings.append(outcome.finding)
+    return outcome
+
+
+def _branch_contains(github, repo: str, merge_sha: str, head_sha: str) -> bool:
+    try:
+        return github.compare(repo, merge_sha, head_sha) in CONTAINS_MERGE
+    except Exception as exc:  # noqa: BLE001 - unknown relation: leave the finding to live verification
+        logger.warning("Compare %s...%s in %s failed: %s", merge_sha, head_sha, repo, exc)
+        return False
 
 
 def _group(vulns: list[dict]) -> dict[tuple[str, str], list[dict]]:
@@ -94,8 +104,17 @@ def _collect_repositories(run, github, trivy, now, result: CollectResult) -> Non
         seen: set[tuple[str, str]] = set()
         for (ecosystem, package), vulns in _group(scan.vulnerabilities).items():
             seen.add((ecosystem, package))
-            _record_upsert(result, _candidate(repo.project, "APPLICATION", target_ref, ecosystem, package, vulns,
-                                              repository=repo), now)
+            finding = _record_upsert(result, _candidate(repo.project, "APPLICATION", target_ref, ecosystem, package,
+                                                        vulns, repository=repo), now).finding
+            if (
+                finding.state == "PR_MERGED_WAITING_LIVE"
+                and finding.merge_commit_sha
+                and _branch_contains(github, repo.full_name, finding.merge_commit_sha, checkout.commit_sha)
+            ):
+                # The default branch already contains the merged fix and still has the CVE → the fix did not work.
+                return_to_work(finding, now=now, note=(
+                    f"CVE trotz gemergtem Fix ({finding.merge_commit_sha[:12]}) weiterhin auf dem Default-Branch "
+                    f"({checkout.commit_sha[:12]})."))
 
         # A previously open CVE that is gone from the default branch was fixed outside Patchbot's PR flow.
         for finding in Finding.objects.filter(layer="APPLICATION", target_ref=target_ref, state__in=("NEW", "IN_PROGRESS")):

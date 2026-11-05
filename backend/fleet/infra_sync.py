@@ -26,6 +26,10 @@ IMAGE_LINE_RE = re.compile(
 )
 
 
+def distro_eol_date(distro: str, version: str) -> date | None:
+    return DISTRO_EOL_DATES.get((distro.strip().lower(), version.strip().lower()))
+
+
 def is_distro_eol(distro: str, version: str, today: date | None = None) -> bool:
     check_date = today or date.today()
     key = (distro.strip().lower(), version.strip().lower())

@@ -85,3 +85,19 @@ def test_unassigned_containers_get_suggestions():
     suggest_projects()
     container.refresh_from_db()
     assert (container.suggested_project, container.project) == (wuerth, None)
+
+
+@pytest.mark.parametrize("image_tag", [
+    "registry.local:5000/materialdatenbank@sha256:" + "a" * 64,
+    "registry.local:5000/materialdatenbank:main",
+    "registry.local:5000/materialdatenbank",
+    "123456789012.dkr.ecr.eu-central-1.amazonaws.com/team/materialdatenbank:1.2.3@sha256:" + "b" * 64,
+    "materialdatenbank:latest",
+    "materialdatenbank",
+])
+def test_container_image_key_ignores_registry_port_tag_and_digest(image_tag):
+    from fleet.models import HostContainer
+    from inventory.matching import _keys_for_container
+
+    container = HostContainer(image_tag=image_tag, compose_service="", working_dir="")
+    assert _keys_for_container(container) == ["materialdatenbank"]

@@ -86,7 +86,8 @@ def _keys_for_container(container: HostContainer) -> list[str]:
     keys = [container.compose_service.lower()]
     if container.working_dir:
         keys.append(PurePosixPath(container.working_dir).name.lower())
-    image_repo = container.image_tag.split("@", 1)[0].rsplit(":", 1)[0].rsplit("/", 1)[-1]
+    # Last path segment first, then strip the tag: a registry port ("host:5000/name") also contains ":".
+    image_repo = container.image_tag.split("@", 1)[0].rsplit("/", 1)[-1].split(":", 1)[0]
     keys.append(image_repo.lower())
     return [k for k in keys if k]
 

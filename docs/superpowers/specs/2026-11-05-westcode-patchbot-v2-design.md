@@ -232,9 +232,10 @@ Otherwise the finding stays actionable; Claude's assessment is shown as a hint (
 4. **Host OS EOL:** no PR in `westcode-infra`; the finding (`COMPLEX`, infra owner) carries a migration checklist as manual runbook (new image, data migration, DNS cut-over, decommission old VM) **(D-5)**. The GitHub App gets no access to `westcode-infra`.
 
 **Code-patching sandbox:**
-- Ephemeral container with only the worktree mounted; no Patchbot secrets, no GitHub token, no cloud credentials inside.
-- Network egress only to the Anthropic API and the ecosystem's package registry.
-- Allowed tools: read/edit files inside the worktree, run allow-listed commands (package-manager install, the project's test command).
+- The Claude tool-use loop runs in `worker`; the sandbox only executes the individual tool calls. The sandbox therefore holds no API key.
+- Ephemeral container with only the worktree mounted; no Patchbot secrets, no Anthropic key, no GitHub token, no cloud credentials inside; `--cap-drop=ALL`, `no-new-privileges`, non-root user.
+- Network egress only to the ecosystem's package registry (internal network + allow-listing egress proxy).
+- Allowed tools: read/edit files inside the worktree (path-confined), run allow-listed commands (package-manager install with lifecycle scripts disabled, the project's test command).
 - Limits: max 30 tool iterations, max 15 min, max token budget per run (configurable).
 - **Diff gate after the run** (enforced by Patchbot, outside the sandbox): reject if the diff touches `.github/**`, `.circleci/**`, deployment/infra files, `*.env*`, matches secret patterns, or exceeds 500 changed lines. A rejected run leaves the finding `COMPLEX` without PR, with a note in the detail panel.
 - Patchbot commits and pushes the validated diff with the GitHub App token.
@@ -271,7 +272,7 @@ PR merge detection: GitHub `pull_request` webhook (`closed` + `merged == true`) 
 | `SUPPRESSED_UNMONITORED` | Project not monitored | — | `NEW` when monitoring is re-enabled |
 
 - **Working-day clock (D-2):** Mon–Fri in `Europe/Berlin`, excluding a configurable holiday list (`PATCHBOT_HOLIDAYS`, default: NRW public holidays). A deadline of *n* working days ends at the same local time *n* working days later; a finding created on a weekend/holiday starts counting at 08:00 of the next working day.
-- **KEV exception (D-2):** findings that are `CRITICAL` **and** `kev_listed` use wall-clock hours (24 h / 48 h / 24 h) and escalate immediately, also outside working hours.
+- **KEV exception (D-2):** findings that are `CRITICAL` **and** `kev_listed` use wall-clock time (`NEW` 24 h; `IN_PROGRESS` 48 h for `SIMPLE` / 7 days for `COMPLEX`; `PR_MERGED_WAITING_LIVE` 24 h) and escalate immediately, also outside working hours.
 - A `NEW` finding whose PR is merged before acknowledgement moves directly to `PR_MERGED_WAITING_LIVE` (implicit acknowledgement, logged).
 - Any active team member may click „Ich bin dran“; doing so reassigns the finding to them (logged).
 - `POST /api/findings/<id>/extend/` extends the current deadline once per stage by the stage's original length, with mandatory reason (logged, visible in the detail panel).
@@ -408,6 +409,7 @@ All credentials come from the environment/secret store, never from the repositor
 | §5 Research | ScanRun/TargetScan health; image-layer scanning; cluster key & dedupe; deterministic policy gate around Claude; PR principles; sandbox & diff gate; no pushes to bot branches | Prevent duplicate findings, silent AI suppression, prompt injection with write access |
 | §6 Triage | State table incl. `RESOLVED_NO_DEPLOYMENT`, `SUPPRESSED_UNMONITORED`; ownership by layer/complexity; verification fixed (merge commit must be an **ancestor of** the running revision/HEAD; ≥ 1 container; fresh telemetry); `image_created_at` demoted to hint; idempotent notifications; audit log; PR merge polling | v2.0 had the ancestry direction reversed and allowed verification with zero containers |
 | §7 Security | New section: OIDC validation, `oid` binding, sessions/CSRF/permissions, push-only agent allowlist, oneshot unit, Slack + GitHub webhook signature verification, secrets | v2.0 had no authorization model and no webhook request verification |
+| §5.5 / §6.2 | Claude loop runs in `worker`, sandbox gets no API key and registry-only egress; KEV wall-clock deadlines spelled out per stage | Clarified while writing the implementation plan |
 | §6 / §10 | Decisions D-1…D-5: public webhooks, working-day deadlines with KEV exception, transparency-only dismissal, Docker proxy deferred, EOL runbook only | Resolved with the user on 2026-11-05 |
 | §8 Frontend | „Automatisch gefiltert“ tab, GRAU banner, extend action, event history; „Team & Schichten“ → „Team“ (no shift model exists) | Align UI with lifecycle |
 | §9 Migration | New: v1 decommission steps | v1 mutating paths conflict with the anti-goals |

@@ -53,10 +53,15 @@ def sync_repositories(github) -> dict:
     return {"created": created, "updated": updated}
 
 
-def link_containers_to_repositories() -> int:
+def link_containers_to_repositories(containers=None) -> int:
+    """Link unlinked containers to their repository via the OCI source label.
+
+    ``containers`` optionally narrows the candidates (e.g. to the rows of one agent report).
+    """
     repos = {r.full_name.lower(): r for r in RepositoryAsset.objects.all()}
     linked = 0
-    for container in HostContainer.objects.filter(repository__isnull=True).exclude(oci_source=""):
+    candidates = HostContainer.objects.all() if containers is None else containers
+    for container in candidates.filter(repository__isnull=True).exclude(oci_source=""):
         match = _OCI_SOURCE_RE.match(container.oci_source.strip())
         repo = repos.get(match.group("repo").lower()) if match else None
         if repo is None:

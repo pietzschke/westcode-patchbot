@@ -87,3 +87,67 @@ def test_unknown_distro_has_no_eol_date(host):
     _post({**REPORT, "os_distro": "alpine", "os_version": "3.20"})
     host.refresh_from_db()
     assert host.os_eol_date is None
+
+
+def test_report_keeps_container_assignments_across_reports(host):
+    from fleet.models import HostContainer
+    from testing.factories import make_project, make_repo
+
+    _post({**REPORT, "containers": [{**REPORT["containers"][0], "oci_source": ""}]})
+    project = make_project()
+    repo = make_repo(project=project)
+    HostContainer.objects.filter(host=host).update(project=project, suggested_project=project, repository=repo)
+    original_id = host.containers.get().id
+
+    # Container was recreated (new id/digest) between reports — same name + compose service.
+    second = {**REPORT["containers"][0], "container_id": "c1-new", "image_id": "sha256:img2", "oci_source": ""}
+    assert _post({**REPORT, "containers": [second]}).status_code == 200
+
+    c = host.containers.get()
+    assert c.id == original_id
+    assert c.project_id == project.id
+    assert c.suggested_project_id == project.id
+    assert c.repository_id == repo.id
+    assert c.container_id == "c1-new"
+    assert c.image_id == "sha256:img2"
+
+
+def test_report_updates_reported_at_for_existing_container(host):
+    _post(REPORT)
+    first = host.containers.get().reported_at
+    _post(REPORT)
+    assert host.containers.get().reported_at > first
+
+
+def test_new_container_links_to_known_repository_immediately(host):
+    from testing.factories import make_project, make_repo
+
+    project = make_project()
+    repo = make_repo(full_name="westcoder/materialdatenbank", project=project)
+    _post(REPORT)
+    c = host.containers.get()
+    assert c.repository_id == repo.id
+    assert c.project_id == project.id
+
+
+def test_changed_oci_source_relinks_repository(host):
+    from testing.factories import make_repo
+
+    old = make_repo(full_name="westcoder/materialdatenbank")
+    new = make_repo(full_name="westcoder/mdb-next")
+    _post(REPORT)
+    assert host.containers.get().repository_id == old.id
+    moved = {**REPORT["containers"][0], "oci_source": "https://github.com/westcoder/mdb-next"}
+    _post({**REPORT, "containers": [moved]})
+    assert host.containers.get().repository_id == new.id
+
+
+def test_vanished_containers_are_removed_others_kept(host):
+    from testing.factories import make_project
+
+    worker = {**REPORT["containers"][0], "container_id": "c2", "name": "mdb-worker", "compose_service": "worker"}
+    _post({**REPORT, "containers": [REPORT["containers"][0], worker]})
+    project = make_project()
+    host.containers.filter(name="mdb-app").update(project=project)
+    _post(REPORT)
+    assert list(host.containers.values_list("name", "project_id")) == [("mdb-app", project.id)]

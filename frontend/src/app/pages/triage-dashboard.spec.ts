@@ -82,6 +82,28 @@ describe('TriageDashboard', () => {
     expect(el.querySelector('.finding-row')?.textContent).toContain('lodash');
   });
 
+  it('filters by minimum severity', () => {
+    const { fixture, el } = setup();
+    const select = el.querySelector<HTMLSelectElement>('#severity-filter')!;
+    expect(Array.from(select.options).map((o) => o.value)).toEqual(['', 'CRITICAL', 'HIGH', 'MEDIUM']);
+    select.value = 'CRITICAL';
+    select.dispatchEvent(new Event('change'));
+    fixture.detectChanges();
+    const rows = Array.from(el.querySelectorAll('.finding-row')).map((r) => r.textContent ?? '');
+    expect(rows.length).toBe(1);
+    expect(rows[0]).toContain('django');
+    select.value = 'HIGH';
+    select.dispatchEvent(new Event('change'));
+    fixture.detectChanges();
+    expect(el.querySelectorAll('.finding-row').length).toBe(2);
+    click(fixture, el, '[data-group="project"]');
+    select.value = 'CRITICAL';
+    select.dispatchEvent(new Event('change'));
+    fixture.detectChanges();
+    const heads = Array.from(el.querySelectorAll('.group-head .group-name')).map((h) => h.textContent?.trim());
+    expect(heads).toEqual(['SES Sandmann']);
+  });
+
   it('groups by project when „Nach Projekt“ is selected', () => {
     const { fixture, el } = setup();
     click(fixture, el, '[data-group="project"]');

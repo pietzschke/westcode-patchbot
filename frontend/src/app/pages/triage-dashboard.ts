@@ -14,6 +14,15 @@ const BUCKETS: { key: BucketKey; label: string; hint: string }[] = [
   { key: 'waiting_live', label: '3. Gemergt – wartet auf Live-Gang', hint: 'Frist 1 Werktag' },
 ];
 
+/** Mirrors triage.models.SEVERITY_RANK. */
+const SEVERITY_RANK: Record<string, number> = { UNKNOWN: 0, LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
+const SEVERITY_FILTERS = [
+  { value: '', label: 'Alle Schweregrade' },
+  { value: 'CRITICAL', label: 'Nur CRITICAL' },
+  { value: 'HIGH', label: 'HIGH und höher' },
+  { value: 'MEDIUM', label: 'MEDIUM und höher' },
+];
+
 const DATE_FMT = new Intl.DateTimeFormat('de-DE', {
   day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin',
 });
@@ -58,6 +67,14 @@ const DATE_FMT = new Intl.DateTimeFormat('de-DE', {
             <label class="toggle">
               <input id="only-mine" type="checkbox" [checked]="onlyMine()" (change)="onlyMine.set(!onlyMine())" />
               Nur meine Aufgaben
+            </label>
+            <label class="toggle">
+              Schweregrad
+              <select id="severity-filter" class="assign-select" (change)="minSeverity.set($any($event.target).value)">
+                @for (s of severityFilters; track s.value) {
+                  <option [value]="s.value" [selected]="s.value === minSeverity()">{{ s.label }}</option>
+                }
+              </select>
             </label>
           }
         </div>
@@ -192,6 +209,8 @@ export class TriageDashboard implements OnInit {
   readonly mode = signal<Mode>('security');
   readonly grouping = signal<Grouping>('effort');
   readonly onlyMine = signal(false);
+  readonly severityFilters = SEVERITY_FILTERS;
+  readonly minSeverity = signal('');
   readonly selectedId = signal<number | null>(null);
   readonly notice = signal('');
 
@@ -214,9 +233,15 @@ export class TriageDashboard implements OnInit {
     this.api.getDashboard().subscribe((d) => this.data.set(d));
   }
 
+  /** Applies the security-view filters „Nur meine Aufgaben“ and minimum severity. */
   mine(list: FindingDto[]): FindingDto[] {
     const meId = this.data()?.me_id;
-    return this.onlyMine() ? list.filter((f) => f.assignee?.id === meId) : list;
+    const min = this.minSeverity();
+    return list.filter(
+      (f) =>
+        (!this.onlyMine() || f.assignee?.id === meId) &&
+        (!min || (SEVERITY_RANK[f.highest_severity] ?? 0) >= SEVERITY_RANK[min]),
+    );
   }
 
   deadlineText(f: FindingDto): string {

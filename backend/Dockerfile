@@ -8,7 +8,7 @@
 #   npm/uv – deterministic lockfile bumps (research.bumper)
 #   docker – CLI only; talks to a daemon only when compose.ai-patching.yaml mounts the socket
 
-FROM ghcr.io/astral-sh/uv:0.9.5 AS uv
+FROM ghcr.io/astral-sh/uv:0.11.11 AS uv
 FROM aquasec/trivy:0.67.2 AS trivy
 FROM docker:28-cli AS dockercli
 FROM node:22-trixie-slim AS node

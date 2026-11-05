@@ -40,9 +40,11 @@ def _data_health_causes(now: datetime) -> list[dict]:
         shown = ", ".join(r.split(":", 1)[-1] for r in failed[:3]) + (" …" if len(failed) > 3 else "")
         causes.append({"code": "scan_partial", "text": f"{len(failed)} Scan-Ziel(e) fehlgeschlagen: {shown}"})
 
-    for host in Host.objects.filter(project__is_monitored=True).filter(
-        Q(last_seen_at__isnull=True) | Q(last_seen_at__lt=now - AGENT_MAX_SILENCE)
-    ):
+    # A host counts when it belongs to a monitored project or runs a container of one (shared hosts).
+    monitored_hosts = Host.objects.filter(
+        Q(project__is_monitored=True) | Q(containers__project__is_monitored=True)
+    ).distinct()
+    for host in monitored_hosts.filter(Q(last_seen_at__isnull=True) | Q(last_seen_at__lt=now - AGENT_MAX_SILENCE)):
         if host.last_seen_at is None:
             text = f"Agent auf {host.hostname} hat noch nie gemeldet."
         else:

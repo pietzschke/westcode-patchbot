@@ -93,3 +93,15 @@ def test_green_when_nothing_open(healthy):
     ampel = compute_ampel(now=NOW)
     assert ampel["color"] == "GREEN"
     assert ampel["counts"]["filtered"] == 1
+
+
+def test_stale_agent_on_host_running_monitored_containers_turns_grey(healthy):
+    from testing.factories import make_container
+
+    host = make_host(slug="shared", project=None, last_seen_at=NOW - timedelta(hours=3))
+    make_container(host, project=make_project(slug="ses", is_monitored=True))
+    make_container(host, project=make_project(slug="ses2", is_monitored=True))
+    ampel = compute_ampel(now=NOW)
+    assert ampel["color"] == "GREY"
+    assert [c["text"] for c in ampel["causes"] if c["code"] == "agent_stale"] == [
+        "Agent auf shared.westcode.de seit 180 min stumm."]

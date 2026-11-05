@@ -110,7 +110,7 @@ def send_new_finding_dms(*, slack, now: datetime | None = None, target_raised: I
     for f in raised_pending:
         raised_groups[_recipient(f)].append(f)
 
-    sent = 0
+    sent = failed = 0
     for recipient in list(dict.fromkeys([*groups, *raised_groups])):
         findings, raised = groups.get(recipient, []), raised_groups.get(recipient, [])
         to_team = recipient == settings.SLACK_TEAM_CHANNEL_ID
@@ -135,20 +135,22 @@ def send_new_finding_dms(*, slack, now: datetime | None = None, target_raised: I
         except SlackError as exc:
             logger.warning("Slack DM to %s failed: %s", recipient, exc)
             record_health("slack", False, str(exc), now)
+            failed += 1
             continue
         for f in findings:
             _log_sent([f], "NEW_DM", _new_cycle_stage(f), recipient, ts, now)
         for f in raised:
             _log_sent([f], "TARGET_RAISED", _target_stage(f), recipient, ts, now)
-        record_health("slack", True, now=now)
         sent += 1
+    if sent and not failed:  # a later success must not hide an earlier failure of the same run
+        record_health("slack", True, now=now)
     return sent
 
 
 def escalate_overdue(*, slack, now: datetime | None = None) -> int:
     now = now or timezone.now()
     in_window = next_posting_time(now) == now
-    posted = 0
+    posted = failed = 0
     overdue = Finding.objects.filter(state__in=OPEN_STATES, deadline_at__lt=now).select_related("project", "assignee")
     for f in overdue:
         stage = STAGE_BY_STATE[f.state]
@@ -162,27 +164,32 @@ def escalate_overdue(*, slack, now: datetime | None = None) -> int:
             ts = slack.post_message(settings.SLACK_TEAM_CHANNEL_ID, text, _finding_blocks(f, text))
         except SlackError as exc:
             record_health("slack", False, str(exc), now)
+            failed += 1
             continue
         f.escalated_stage = stage
         f.save(update_fields=["escalated_stage", "updated_at"])
         _log_sent([f], "ESCALATION", stage, settings.SLACK_TEAM_CHANNEL_ID, ts, now)
         log_event(f, source="SYSTEM", from_state=f.state, to_state=f.state, at=now,
                   note=f"Eskaliert an den Team-Channel ({STAGE_LABEL[stage]}).")
-        record_health("slack", True, now=now)
         posted += 1
+    if posted and not failed:
+        record_health("slack", True, now=now)
     return posted
 
 
 def sync_slack_user_ids(*, slack) -> int:
-    updated = 0
+    updated = looked_up = 0
     for member in TeamMember.objects.filter(is_active=True, slack_user_id__isnull=True):
         try:
             user_id = slack.lookup_user_by_email(member.email)
         except SlackError as exc:
             record_health("slack", False, str(exc))
             return updated
+        looked_up += 1
         if user_id:
             member.slack_user_id = user_id
             member.save(update_fields=["slack_user_id"])
             updated += 1
+    if looked_up:  # the Slack API answered every lookup: clear an earlier failure (DMs re-record their own)
+        record_health("slack", True)
     return updated

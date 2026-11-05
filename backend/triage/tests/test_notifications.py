@@ -183,3 +183,35 @@ def test_target_raised_dm_skips_findings_that_are_no_longer_in_progress(team):
     a, _ = team
     f = make_finding(state="PR_MERGED_WAITING_LIVE", assignee=a)
     assert send_new_finding_dms(slack=FakeSlack(), now=MONDAY_9, target_raised=[f]) == 0
+
+
+class PartiallyFailingSlack(FakeSlack):
+    def __init__(self, failing):
+        super().__init__()
+        self.failing = failing
+
+    def post_message(self, channel, text, blocks=None):
+        from triage.slack import SlackError
+
+        if channel == self.failing:
+            raise SlackError("chat.postMessage: channel_not_found")
+        return super().post_message(channel, text, blocks)
+
+
+@pytest.mark.parametrize("failing", ["UA", "UB"])  # independent of the send order
+def test_one_failed_dm_keeps_slack_health_failing_even_if_others_succeed(team, failing):
+    a, b = team
+    make_finding(state="NEW", assignee=a)
+    make_finding(state="NEW", assignee=b)
+    assert send_new_finding_dms(slack=PartiallyFailingSlack(failing), now=MONDAY_9) == 1
+    health = IntegrationHealth.objects.get(name="slack")
+    assert health.ok is False and "channel_not_found" in health.last_error
+
+
+def test_successful_user_sync_clears_slack_failure(db):
+    from triage.notifications import record_health
+
+    make_member(email="new@westcode.de", slack_user_id=None)
+    record_health("slack", False, "users.lookupByEmail: invalid_auth")
+    sync_slack_user_ids(slack=FakeSlack(users={"new@westcode.de": "UNEW"}))
+    assert IntegrationHealth.objects.get(name="slack").ok is True

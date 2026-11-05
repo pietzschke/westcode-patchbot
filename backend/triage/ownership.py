@@ -55,8 +55,15 @@ def _candidate(finding: Finding, github, now: datetime) -> tuple[TeamMember | No
             if _is_bot(author):
                 continue
             member = _member_for_author(author, members)
-            if member is not None:
+            if member is None:
+                continue
+            if member.slack_user_id:
                 return member, f"Letzte Änderung an {paths[0]} (Git)"
+            # Spec §6.3: an unreachable author is no owner → fall back to the project owner.
+            owner, reason = _project_owner(finding)
+            if owner is None:
+                return None, reason
+            return owner, f"Projekt-Owner ({member.name} hat keine Slack-ID hinterlegt)"
     return _project_owner(finding)
 
 
@@ -69,8 +76,21 @@ def resolve_assignee(finding: Finding, *, github, now: datetime | None = None) -
     return member, reason
 
 
+def _keeps_assignee(finding: Finding) -> bool:
+    """An acknowledged finding („Ich bin dran“ or implicit) stays with its reachable assignee (spec §6.2)."""
+    assignee = finding.assignee
+    return (
+        finding.acknowledged_at is not None
+        and assignee is not None
+        and assignee.is_active
+        and bool(assignee.slack_user_id)
+    )
+
+
 def assign(finding: Finding, *, github, now: datetime | None = None) -> Finding:
     now = now or timezone.now()
+    if _keeps_assignee(finding):
+        return finding
     member, reason = resolve_assignee(finding, github=github, now=now)
     if finding.assignee_id == (member.id if member else None) and finding.assigned_reason_de == reason:
         return finding

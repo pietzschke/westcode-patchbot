@@ -7,7 +7,9 @@ accepts such a claim when this module confirms it from lockfiles or source.
 from __future__ import annotations
 
 import json
+import os
 import re
+import stat
 import tomllib
 from pathlib import Path
 
@@ -18,37 +20,56 @@ PYTHON_ECOSYSTEMS = {"pip", "pipenv", "poetry", "uv", "pypi", "python-pkg"}
 MAX_FILE_BYTES = 1_000_000
 
 
+def _read_checkout_file(checkout: Path, path: Path) -> str | None:
+    """Text of a regular file inside the checkout; never follows a symlink (no worker files as "evidence")."""
+    try:
+        rel = path.relative_to(checkout)
+    except ValueError:
+        return None
+    if any((checkout / Path(*rel.parts[:i])).is_symlink() for i in range(1, len(rel.parts))):
+        return None
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return None
+    with os.fdopen(fd, "rb") as fh:
+        st = os.fstat(fh.fileno())
+        if not stat.S_ISREG(st.st_mode) or st.st_size > MAX_FILE_BYTES:
+            return None
+        return fh.read(MAX_FILE_BYTES).decode("utf-8", errors="replace")
+
+
 def _npm_dev_only(checkout: Path, package: str) -> bool:
-    lock = checkout / "package-lock.json"
-    if not lock.is_file():
+    text = _read_checkout_file(checkout, checkout / "package-lock.json")
+    if text is None:
         return False
     try:
-        packages = json.loads(lock.read_text(encoding="utf-8")).get("packages") or {}
-    except (OSError, json.JSONDecodeError):
+        packages = json.loads(text).get("packages") or {}
+    except (json.JSONDecodeError, AttributeError):
         return False
     entries = [meta for key, meta in packages.items() if key.endswith(f"node_modules/{package}")]
     return bool(entries) and all(bool(meta.get("dev")) for meta in entries)
 
 
 def _poetry_dev_only(checkout: Path, package: str) -> bool:
-    lock = checkout / "poetry.lock"
-    if not lock.is_file():
+    text = _read_checkout_file(checkout, checkout / "poetry.lock")
+    if text is None:
         return False
     try:
-        data = tomllib.loads(lock.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError):
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
         return False
     entries = [p for p in data.get("package", []) if str(p.get("name", "")).lower() == package.lower()]
     return bool(entries) and all(p.get("category") == "dev" for p in entries)
 
 
 def _uv_dev_only(checkout: Path, package: str) -> bool:
-    lock = checkout / "uv.lock"
-    if not lock.is_file():
+    text = _read_checkout_file(checkout, checkout / "uv.lock")
+    if text is None:
         return False
     try:
-        data = tomllib.loads(lock.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError):
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
         return False
     name = package.lower()
     for pkg in data.get("package", []):
@@ -92,14 +113,12 @@ def find_call_sites(
     sites: list[dict] = []
     for path in sorted(checkout.rglob("*")):
         rel = path.relative_to(checkout)
-        if any(part in SKIP_DIRS for part in rel.parts) or path.suffix not in SOURCE_SUFFIXES or not path.is_file():
+        if any(part in SKIP_DIRS for part in rel.parts) or path.suffix not in SOURCE_SUFFIXES:
             continue
-        try:
-            if path.stat().st_size > MAX_FILE_BYTES:
-                continue
-            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError:
+        text = _read_checkout_file(checkout, path)
+        if text is None:
             continue
+        lines = text.splitlines()
         for number, text in enumerate(lines, start=1):
             if pattern.search(text):
                 sites.append({"path": rel.as_posix(), "line": number, "text": text.strip()[:200]})

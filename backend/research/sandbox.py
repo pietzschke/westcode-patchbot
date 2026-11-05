@@ -8,7 +8,10 @@ File tools operate on the host worktree but are confined to it.
 
 from __future__ import annotations
 
+import errno
 import logging
+import os
+import stat
 import subprocess
 import time
 import uuid
@@ -30,7 +33,15 @@ MAX_TOOL_OUTPUT = 20_000
 
 ALLOWED_COMMANDS = {
     "npm": [["npm", "ci", "--ignore-scripts"], ["npm", "test"], ["npm", "run", "build"], ["npm", "run", "lint"]],
-    "python": [["python", "-m", "pytest", "-q"], ["python", "-m", "compileall", "-q", "."]],
+    # Dependencies go into the image's /tmp/venv (tmpfs, never the worktree). --no-build: wheels only, like
+    # --ignore-scripts for npm; the project itself is imported from /work rather than built/installed.
+    "python": [
+        ["uv", "sync", "--frozen", "--no-build", "--no-install-workspace"],
+        ["uv", "pip", "install", "--no-build", "-r", "requirements.txt"],
+        ["uv", "pip", "install", "--no-build", "-r", "requirements-dev.txt"],
+        ["python", "-m", "pytest", "-q"],
+        ["python", "-m", "compileall", "-q", "."],
+    ],
 }
 SANDBOX_IMAGES = {"npm": "patchbot-sandbox:node22", "python": "patchbot-sandbox:python312"}
 
@@ -86,7 +97,9 @@ def build_sandbox_command(worktree: Path, image: str, name: str | None = None) -
         "--cap-drop=ALL",
         "--security-opt=no-new-privileges",
         "--read-only",
-        "--tmpfs", "/tmp:rw,size=512m",
+        # exec: Docker mounts --tmpfs noexec by default, and compiled wheels in the Python image's /tmp/venv
+        # cannot be loaded from a noexec mount. Sandboxed code can run arbitrary code via the interpreters anyway.
+        "--tmpfs", "/tmp:rw,exec,size=512m",
         "--memory=2g", "--pids-limit=512", "--cpus=2",
         "--user=1000:1000",
         "--volume", f"{worktree}:/work:rw",
@@ -116,28 +129,101 @@ class SandboxTools:
             raise ToolRejected("Zugriff auf .git ist nicht erlaubt.")
         return resolved, rel
 
+    # Sandboxed code keeps running between tool calls (background processes) and can swap any path component
+    # for a symlink after _resolve() checked it. So the actual access walks the *checked* relative path from
+    # the root with O_NOFOLLOW on every component instead of trusting a resolved absolute path.
+
+    def _open_dir(self, parts: list[str], *, create: bool = False) -> int:
+        fd = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            for part in parts:
+                if create:
+                    try:
+                        os.mkdir(part, 0o755, dir_fd=fd)
+                    except FileExistsError:
+                        pass
+                next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                os.close(fd)
+                fd = next_fd
+        except BaseException:
+            os.close(fd)
+            raise
+        return fd
+
+    @staticmethod
+    def _parts(rel: str) -> list[str]:
+        return [] if rel == "." else rel.split("/")
+
+    def _no_symlinks(self, action: Callable[[], str]) -> str:
+        try:
+            return action()
+        except OSError as exc:
+            if exc.errno in (errno.ELOOP, errno.ENOTDIR, errno.EMLINK):
+                raise ToolRejected("Symlinks werden nicht verfolgt.") from exc
+            raise
+
+    def _read(self, rel: str) -> str:
+        *dirs, leaf = self._parts(rel)
+        try:
+            dir_fd = self._open_dir(dirs)
+        except (FileNotFoundError, NotADirectoryError):
+            return "Datei existiert nicht."
+        try:
+            try:
+                fd = os.open(leaf, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dir_fd)
+            except FileNotFoundError:
+                return "Datei existiert nicht."
+        finally:
+            os.close(dir_fd)
+        with os.fdopen(fd, "rb") as fh:
+            if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+                return "Datei existiert nicht."
+            return fh.read(MAX_READ_BYTES * 4).decode("utf-8", errors="replace")[:MAX_READ_BYTES]
+
+    def _write(self, rel: str, content: str) -> None:
+        *dirs, leaf = self._parts(rel)
+        dir_fd = self._open_dir(dirs, create=True)
+        try:
+            fd = os.open(leaf, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o644, dir_fd=dir_fd)
+        finally:
+            os.close(dir_fd)
+        with os.fdopen(fd, "wb") as fh:
+            if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+                raise ToolRejected(f"{rel} ist keine reguläre Datei.")
+            fh.truncate(0)
+            fh.write(content.encode("utf-8"))
+
+    def _list(self, rel: str) -> str:
+        try:
+            fd = self._open_dir(self._parts(rel))
+        except (FileNotFoundError, NotADirectoryError):
+            return "Verzeichnis existiert nicht."
+        try:
+            with os.scandir(fd) as it:
+                entries = sorted(e.name + ("/" if e.is_dir(follow_symlinks=False) else "") for e in it
+                                 if e.name != ".git")
+        finally:
+            os.close(fd)
+        return "\n".join(entries[:500])
+
     def dispatch(self, name: str, args: dict) -> str:
         if name == "read_file":
-            target, _ = self._resolve(args.get("path", ""))
-            if not target.is_file():
+            _, rel = self._resolve(args.get("path", ""))
+            if rel == ".":
                 return "Datei existiert nicht."
-            return target.read_text(encoding="utf-8", errors="replace")[:MAX_READ_BYTES]
+            return self._no_symlinks(lambda: self._read(rel))
         if name == "write_file":
-            target, rel = self._resolve(args.get("path", ""))
+            _, rel = self._resolve(args.get("path", ""))
             content = str(args.get("content", ""))
-            if is_denied_path(rel):
+            if rel == "." or is_denied_path(rel):
                 raise ToolRejected(f"Diese Datei darf nicht geändert werden: {rel}")
             if len(content.encode("utf-8")) > MAX_WRITE_BYTES:
                 raise ToolRejected("Datei zu groß.")
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
+            self._no_symlinks(lambda: self._write(rel, content))
             return f"{rel} geschrieben."
         if name == "list_dir":
-            target, _ = self._resolve(args.get("path", ".") or ".")
-            if not target.is_dir():
-                return "Verzeichnis existiert nicht."
-            entries = sorted(p.name + ("/" if p.is_dir() else "") for p in target.iterdir() if p.name != ".git")
-            return "\n".join(entries[:500])
+            _, rel = self._resolve(args.get("path", ".") or ".")
+            return self._no_symlinks(lambda: self._list(rel))
         if name == "run_command":
             argv = args.get("argv")
             if not isinstance(argv, list) or [str(a) for a in argv] not in self.allowed_commands:

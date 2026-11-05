@@ -1,3 +1,5 @@
+import re
+import shutil
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -128,3 +130,106 @@ def test_sandbox_mounts_worktree_git_pointer_read_only(tmp_path):
     assert f"{tmp_path / '.git'}:/work/.git:ro" in joined
     # the read-only overlay must come after the rw worktree mount
     assert joined.index(f"{tmp_path}:/work:rw") < joined.index("/work/.git:ro")
+
+
+# --- review M-2: python dependency install, symlink races in the file tools, egress proxy ---
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def test_python_sandbox_can_install_locked_dependencies_without_building_sdists():
+    from research.sandbox import ALLOWED_COMMANDS
+
+    python = ALLOWED_COMMANDS["python"]
+    installs = [c for c in python if c[0] == "uv"]
+    assert ["uv", "sync", "--frozen", "--no-build", "--no-install-workspace"] in installs
+    assert ["uv", "pip", "install", "--no-build", "-r", "requirements.txt"] in installs
+    assert all("--no-build" in c for c in installs)
+    dockerfile = (REPO_ROOT / "deploy" / "sandbox" / "Dockerfile.python312").read_text(encoding="utf-8")
+    assert re.search(r"^COPY --from=\S+ /uv /usr/local/bin/uv$", dockerfile, flags=re.MULTILINE)
+    # The venv must live on the tmpfs, never in the mounted worktree (it would end up in the diff).
+    assert "UV_PROJECT_ENVIRONMENT=/tmp/venv" in dockerfile
+    assert "VIRTUAL_ENV=/tmp/venv" in dockerfile
+    assert "PATH=/tmp/venv/bin:" in dockerfile
+    assert "--system-site-packages" in dockerfile  # the image's pytest stays importable from the venv
+    # Docker mounts --tmpfs noexec by default; compiled wheels in /tmp/venv would fail to load.
+    cmd = build_sandbox_command(Path("/wt"), image="patchbot-sandbox:python312", name="pb-1")
+    tmpfs = cmd[cmd.index("--tmpfs") + 1]
+    assert tmpfs.startswith("/tmp:") and "exec" in tmpfs.split(":", 1)[1].split(",")
+
+
+def test_egress_proxy_denies_plain_http():
+    lines = [ln.strip() for ln in (REPO_ROOT / "deploy" / "egress-proxy" / "squid.conf").read_text().splitlines()]
+    rules = [ln for ln in lines if ln.startswith("http_access")]
+    assert "http_access deny !CONNECT" in rules
+    assert rules.index("http_access deny !CONNECT") < rules.index("http_access allow registries")
+
+
+class RacyTools(SandboxTools):
+    """Simulates sandboxed code swapping a path component for a symlink right after the confinement check."""
+
+    def __init__(self, *args, swap, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.swap = swap
+
+    def _resolve(self, path):
+        result = super()._resolve(path)
+        self.swap()
+        return result
+
+
+def _racy(root, swap):
+    return RacyTools(root=root, exec_in_sandbox=FakeExec(), allowed_commands=[], swap=swap)
+
+
+@pytest.fixture
+def race(tmp_path):
+    root, outside = tmp_path / "repo", tmp_path / "outside"
+    (root / "src").mkdir(parents=True)
+    (root / "src" / "a.ts").write_text("old\n")
+    outside.mkdir()
+    (outside / "a.ts").write_text("worker secret\n")
+
+    def swap_dir():
+        shutil.rmtree(root / "src")
+        (root / "src").symlink_to(outside)
+
+    def swap_file():
+        (root / "src" / "a.ts").unlink()
+        (root / "src" / "a.ts").symlink_to(outside / "a.ts")
+
+    return root, outside, {"dir": swap_dir, "file": swap_file}
+
+
+@pytest.mark.parametrize("which", ["dir", "file"])
+def test_read_file_never_follows_a_symlink_swapped_in_after_the_check(race, which):
+    root, _, swaps = race
+    try:
+        out = _racy(root, swaps[which]).dispatch("read_file", {"path": "src/a.ts"})
+    except (ToolRejected, OSError):
+        return
+    assert "worker secret" not in out
+
+
+@pytest.mark.parametrize("which", ["dir", "file"])
+def test_write_file_never_writes_through_a_symlink_swapped_in_after_the_check(race, which):
+    root, outside, swaps = race
+    with pytest.raises((ToolRejected, OSError)):
+        _racy(root, swaps[which]).dispatch("write_file", {"path": "src/a.ts", "content": "pwned\n"})
+    assert (outside / "a.ts").read_text() == "worker secret\n"
+
+
+def test_write_file_still_creates_new_directories(tmp_path):
+    tools = tools_for(tmp_path)
+    tools.dispatch("write_file", {"path": "src/new/deep/b.ts", "content": "x\n"})
+    assert (tmp_path / "src/new/deep/b.ts").read_text() == "x\n"
+    assert tools.dispatch("list_dir", {"path": "src/new"}) == "deep/"
+
+
+def test_list_dir_never_follows_a_symlink_swapped_in_after_the_check(race):
+    root, _, swaps = race
+    try:
+        out = _racy(root, swaps["dir"]).dispatch("list_dir", {"path": "src"})
+    except (ToolRejected, OSError):
+        return
+    assert "a.ts" not in out  # the outside directory's listing must not leak

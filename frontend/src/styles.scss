@@ -562,3 +562,11 @@ body {
 .event:first-child { border-top: 0; }
 .runbook { background: var(--neutral-900, #1a1a1c); color: #fff; padding: 10px; border-radius: 6px; font-size: 11px; overflow-x: auto; }
 .crit { color: var(--salmon-700); }
+
+/* v2 projects & assignment */
+.inbox-row, .asset-row {
+  display: flex; align-items: center; gap: 0.85rem; padding: 0.55rem 0.6rem; border-bottom: 1px solid var(--neutral-200);
+}
+.inbox-row .finding-main, .asset-row > :first-child { flex: 1; }
+.assign-select, .deployment-select { font: inherit; font-size: 0.8125rem; padding: 4px 6px; border: 1px solid var(--neutral-300); border-radius: 4px; }
+.project-card .group-name { display: inline-flex; gap: 0.4rem; align-items: center; }

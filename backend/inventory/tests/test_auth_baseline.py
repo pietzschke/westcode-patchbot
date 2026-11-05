@@ -115,3 +115,12 @@ def test_compose_healthcheck_uses_public_health_endpoint():
     compose = yaml.safe_load((REPO_ROOT / "deploy/compose.yaml").read_text())
     healthcheck = " ".join(compose["services"]["backend"]["healthcheck"]["test"])
     assert "/api/health/" in healthcheck
+
+
+@pytest.mark.django_db
+def test_me_sets_csrf_cookie_for_the_spa():
+    user, _ = make_user_with_member(email="spa@westcode.de")
+    client = APIClient()
+    client.force_login(user)
+    resp = client.get("/api/auth/me/")
+    assert "csrftoken" in resp.cookies

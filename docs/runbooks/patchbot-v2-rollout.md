@@ -80,9 +80,8 @@ docker compose -f deploy/compose.yaml build
 
 # Frontend bauen: statische Dateien, die der Reverse Proxy (Abschnitt 4) direkt aus
 # /opt/patchbot/frontend/dist/frontend/browser ausliefert. Node läuft nur im Wegwerf-Container.
-# (Im Repository liegt keine package-lock.json, daher `npm install` statt `npm ci`.)
 docker run --rm -v /opt/patchbot/frontend:/app -w /app node:22-alpine \
-  sh -c 'npm install --no-audit --no-fund && npx ng build'
+  sh -c 'npm ci --no-audit --no-fund && npx ng build'
 ls /opt/patchbot/frontend/dist/frontend/browser/index.html
 
 # Nur für Claude-Code-Patching (Abschnitt 14):
@@ -473,7 +472,7 @@ $C build
 $C up -d --remove-orphans
 # Frontend neu bauen (der Reverse Proxy liefert dist/frontend/browser aus, siehe Abschnitt 2)
 docker run --rm -v /opt/patchbot/frontend:/app -w /app node:22-alpine \
-  sh -c 'npm install --no-audit --no-fund && npx ng build'
+  sh -c 'npm ci --no-audit --no-fund && npx ng build'
 docker volume rm patchbot_trivy-cache        # Cache des alten Trivy-Servers
 
 # 4. Kontrolle

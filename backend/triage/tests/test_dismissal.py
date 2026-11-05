@@ -105,3 +105,13 @@ def test_cannot_dismiss_verified_finding(actor):
     with pytest.raises(ValidationError):
         dismiss(make_finding(state="VERIFIED_LIVE"), actor, mode="DISMISSED", reason=REASON, source="WEB",
                 slack=FakeSlack(), now=NOW)
+
+
+def test_expired_snooze_of_unmonitored_project_is_suppressed_not_new(actor):
+    f = make_finding(project__is_monitored=False)
+    dismiss(f, actor, mode="SNOOZED", reason=REASON, snooze_days=14, source="WEB", slack=FakeSlack(), now=NOW)
+    evaluate_reopen_rules(now=NOW + timedelta(days=15))
+    f.refresh_from_db()
+    assert f.state == "SUPPRESSED_UNMONITORED"
+    assert (f.dismissal_mode, f.dismissed_by) == ("", None)
+    assert f.events.filter(from_state="SNOOZED", to_state="SUPPRESSED_UNMONITORED").exists()

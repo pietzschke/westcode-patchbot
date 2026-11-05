@@ -69,12 +69,14 @@ def test_dismissed_key_is_muted(repo):
 def test_new_cve_on_dismissed_key_reopens(repo):
     f = upsert_finding(cand(repo, Vuln("CVE-2026-0001", "HIGH", "4.17.19")), now=NOW).finding
     f.state = "DISMISSED"
+    f.dismissal_mode, f.dismissal_reason, f.dismissed_at, f.dismissed_severity = "DISMISSED", "Nicht genutzt.", NOW, "HIGH"
     f.save()
     result = upsert_finding(cand(repo, Vuln("CVE-2026-0001", "HIGH", "4.17.19"), Vuln("CVE-2026-0009", "HIGH", "4.17.21")), now=NOW)
     f.refresh_from_db()
     assert result.finding == f
     assert f.state == "NEW"
     assert f.events.filter(from_state="DISMISSED", to_state="NEW").exists()
+    assert (f.dismissal_mode, f.dismissal_reason, f.dismissed_at, f.dismissed_severity) == ("", "", None, "")
 
 
 @pytest.mark.parametrize("parked", ["SNOOZED", "FILTERED_IRRELEVANT", "SUPPRESSED_UNMONITORED"])

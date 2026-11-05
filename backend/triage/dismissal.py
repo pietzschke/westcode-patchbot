@@ -10,7 +10,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
-from triage.findings import _start_new, log_event
+from triage.findings import clear_dismissal, log_event, reopen_state
 from triage.models import OPEN_STATES, SEVERITY_RANK, Finding
 from triage.slack import SlackError
 
@@ -75,26 +75,16 @@ def dismiss(finding: Finding, actor, *, mode: str, reason: str, snooze_days: int
     return finding
 
 
-def _clear_dismissal(finding: Finding) -> None:
-    finding.dismissal_mode = ""
-    finding.dismissal_reason = ""
-    finding.dismissed_by = None
-    finding.dismissed_at = None
-    finding.dismissed_severity = ""
-    finding.dismissed_kev_listed = False
-    finding.snoozed_until = None
-
-
 @transaction.atomic
 def reopen(finding: Finding, actor, *, source: str, note: str, now: datetime | None = None) -> Finding:
     now = now or timezone.now()
     if finding.state not in REOPENABLE_STATES:
         raise ValidationError(f"Ein Finding im Status {finding.state} kann nicht wieder geöffnet werden.")
     previous = finding.state
-    _clear_dismissal(finding)
-    _start_new(finding, now)
+    clear_dismissal(finding)
+    reopen_state(finding, now)
     finding.save()
-    log_event(finding, actor=actor, source=source, from_state=previous, to_state="NEW", note=note, at=now)
+    log_event(finding, actor=actor, source=source, from_state=previous, to_state=finding.state, note=note, at=now)
     return finding
 
 

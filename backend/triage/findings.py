@@ -64,6 +64,26 @@ def _start_new(finding: Finding, now: datetime) -> None:
     )
 
 
+def clear_dismissal(finding: Finding) -> None:
+    finding.dismissal_mode = ""
+    finding.dismissal_reason = ""
+    finding.dismissed_by = None
+    finding.dismissed_at = None
+    finding.dismissed_severity = ""
+    finding.dismissed_kev_listed = False
+    finding.snoozed_until = None
+
+
+def reopen_state(finding: Finding, now: datetime) -> str:
+    """Re-enter the active lifecycle: a new NEW cycle, or SUPPRESSED_UNMONITORED while the project is not
+    monitored (it becomes NEW once monitoring is re-enabled). Returns the new state; the caller saves."""
+    if not finding.project.is_monitored:
+        finding.state = "SUPPRESSED_UNMONITORED"
+        return finding.state
+    _start_new(finding, now)
+    return finding.state
+
+
 @transaction.atomic
 def upsert_finding(candidate: Candidate, *, now: datetime | None = None) -> UpsertResult:
     now = now or timezone.now()
@@ -92,9 +112,10 @@ def upsert_finding(candidate: Candidate, *, now: datetime | None = None) -> Upse
         _merge_into(parked, candidate, cve_ids, severity, target)
         if parked.state == "DISMISSED" and not set(cve_ids) <= known:
             previous = parked.state
-            _start_new(parked, now)
+            clear_dismissal(parked)
+            reopen_state(parked, now)
             parked.save()
-            log_event(parked, source="SYSTEM", from_state=previous, to_state="NEW",
+            log_event(parked, source="SYSTEM", from_state=previous, to_state=parked.state,
                       note="Neue CVE für ein als „nicht betroffen“ markiertes Paket.", at=now)
             return UpsertResult(parked)
         return UpsertResult(parked, muted=True)

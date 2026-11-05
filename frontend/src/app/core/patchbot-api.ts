@@ -246,6 +246,18 @@ export interface MeDto {
   is_default_infra_owner: boolean;
 }
 
+export interface ScanStatusDto {
+  running: boolean;
+  job_id: number | null;
+  scan_run: {
+    id: number;
+    status: 'RUNNING' | 'OK' | 'PARTIAL' | 'FAILED';
+    started_at: string;
+    finished_at: string | null;
+    targets_done: number;
+  } | null;
+}
+
 export interface DismissPayload {
   mode: 'DISMISSED' | 'SNOOZED';
   reason: string;
@@ -331,6 +343,10 @@ export class PatchbotApi {
 
   sendTestDm(id: number): Observable<void> {
     return this.http.post<void>(`/api/team/${id}/test-dm/`, {});
+  }
+
+  getScanStatus(): Observable<ScanStatusDto> {
+    return this.http.get<ScanStatusDto>('/api/scans/run/');
   }
 
   runScan(): Observable<{ job_id: number }> {

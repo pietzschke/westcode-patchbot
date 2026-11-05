@@ -19,18 +19,19 @@ from controlplane.ampel import compute_ampel
 from controlplane.clients import slack_client
 from controlplane.serializers import (
     container_ref, finding_detail, finding_summary, host_ref, maintenance_dict, member_dict, project_dict,
-    repository_dict,
+    repository_dict, scan_run_dict,
 )
 from fleet.models import Host, HostContainer
 from inventory.matching import confirm_suggestion
 from inventory.models import LAYER_CHOICES, Project, RepositoryAsset, TeamMember
 from inventory.notion_sync import set_monitoring
 from inventory.permissions import IsTeamAdmin, IsTeamMember, active_member
-from research.models import MaintenanceUpdate
+from research.models import MaintenanceUpdate, ScanRun
 from triage.dismissal import dismiss, reopen
+from triage.jobs import ACTIVE as JOB_ACTIVE
 from triage.jobs import enqueue
 from triage.lifecycle import InvalidTransition, acknowledge, extend_deadline, resolve_without_deployment
-from triage.models import Finding
+from triage.models import Finding, Job
 
 ASSET_MODELS = {"repository": RepositoryAsset, "host": Host, "container": HostContainer}
 DEPLOYMENT_MODES = {value for value, _ in RepositoryAsset.DEPLOYMENT_MODES}
@@ -291,6 +292,16 @@ class TeamTestDmView(APIView):
 
 
 class ScanRunView(APIView):
+    def get(self, request: Request) -> Response:
+        """Status for the header button: disabled while a daily scan job is queued or running (spec §8.1)."""
+        job = Job.objects.filter(kind="daily_scan", status__in=JOB_ACTIVE).order_by("id").first()
+        run = ScanRun.objects.first()
+        return Response({
+            "running": job is not None,
+            "job_id": job.id if job else None,
+            "scan_run": scan_run_dict(run) if run else None,
+        })
+
     def post(self, request: Request) -> Response:
         job = enqueue("daily_scan", {"trigger": "MANUAL"}, unique=True)
         if job is None:

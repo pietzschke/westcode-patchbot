@@ -8,7 +8,7 @@ from django.utils import timezone
 
 from fleet.models import Host, HostContainer
 from inventory.models import Project, RepositoryAsset, TeamMember
-from research.models import MaintenanceUpdate
+from research.models import MaintenanceUpdate, ScanRun
 from triage.models import Finding
 from triage.verification import needs_deployment_decision
 
@@ -122,3 +122,8 @@ def host_ref(h: Host) -> dict:
 def container_ref(c: HostContainer) -> dict:
     return {"id": c.id, "type": "container", "name": f"{c.host.hostname}: {c.name}", "image": c.image_tag,
             "suggested_project": project_ref(c.suggested_project)}
+
+
+def scan_run_dict(run: ScanRun) -> dict:
+    return {"id": run.id, "status": run.status, "started_at": _iso(run.started_at),
+            "finished_at": _iso(run.finished_at), "targets_done": run.targets.count()}

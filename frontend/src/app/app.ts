@@ -1,8 +1,17 @@
-import { Component, inject, signal } from '@angular/core';
+import { Component, DestroyRef, inject, signal } from '@angular/core';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { HttpErrorResponse } from '@angular/common/http';
+import { Subscription, switchMap, timer } from 'rxjs';
 import { AuthService } from './core/auth';
-import { PatchbotApi } from './core/patchbot-api';
+import { PatchbotApi, ScanStatusDto } from './core/patchbot-api';
+
+export const SCAN_POLL_MS = 5000;
+const SCAN_RESULT_LABELS: Record<string, string> = {
+  OK: 'erfolgreich',
+  PARTIAL: 'teilweise fehlgeschlagen',
+  FAILED: 'fehlgeschlagen',
+  RUNNING: 'beendet',
+};
 
 @Component({
   selector: 'app-root',
@@ -53,13 +62,14 @@ import { PatchbotApi } from './core/patchbot-api';
           id="run-scan-btn"
           class="btn-secondary btn-standard"
           style="width:auto;margin:0;padding:6px 12px;font-size:12px;"
-          [disabled]="isStarting()"
+          [disabled]="scanBusy()"
           (click)="runScan()"
         >
           Scan &amp; Sync starten
         </button>
         @if (auth.me(); as me) {
           <span class="user-badge" [title]="me.email">{{ me.name }}</span>
+          <button type="button" id="logout-btn" class="btn-link" (click)="logout()">Abmelden</button>
         }
       </div>
     </header>
@@ -69,20 +79,69 @@ import { PatchbotApi } from './core/patchbot-api';
 export class App {
   private readonly api = inject(PatchbotApi);
   readonly auth = inject(AuthService);
-  readonly isStarting = signal(false);
+  /** True from the click until the queued daily_scan job has finished (spec §8.1). */
+  readonly scanBusy = signal(false);
   readonly scanStatus = signal('');
+  private poll: Subscription | null = null;
+
+  constructor() {
+    inject(DestroyRef).onDestroy(() => this.poll?.unsubscribe());
+    this.api.getScanStatus().subscribe({ next: (s) => this.applyStatus(s, false), error: () => undefined });
+  }
 
   runScan(): void {
-    this.isStarting.set(true);
+    this.scanBusy.set(true);
     this.api.runScan().subscribe({
       next: () => {
-        this.isStarting.set(false);
-        this.scanStatus.set('Scan gestartet – Ergebnisse erscheinen in einigen Minuten.');
+        this.scanStatus.set('Scan gestartet …');
+        this.startPolling();
       },
       error: (err: HttpErrorResponse) => {
-        this.isStarting.set(false);
-        this.scanStatus.set(err.status === 409 ? 'Ein Scan läuft bereits.' : 'Scan konnte nicht gestartet werden.');
+        if (err.status === 409) {
+          this.scanStatus.set('Ein Scan läuft bereits.');
+          this.startPolling();
+        } else {
+          this.scanBusy.set(false);
+          this.scanStatus.set('Scan konnte nicht gestartet werden.');
+        }
       },
     });
+  }
+
+  logout(): void {
+    void this.auth.logout();
+  }
+
+  private startPolling(): void {
+    this.poll?.unsubscribe();
+    this.poll = timer(SCAN_POLL_MS, SCAN_POLL_MS)
+      .pipe(switchMap(() => this.api.getScanStatus()))
+      .subscribe({
+        next: (s) => this.applyStatus(s, true),
+        error: () => {
+          this.scanBusy.set(false);
+          this.scanStatus.set('Scan-Status unbekannt – bitte Seite neu laden.');
+        },
+      });
+  }
+
+  private applyStatus(status: ScanStatusDto, polling: boolean): void {
+    const run = status.scan_run;
+    if (status.running) {
+      this.scanBusy.set(true);
+      const progress = run?.status === 'RUNNING' ? ` (${run.targets_done} Ziele gescannt)` : '';
+      this.scanStatus.set(`Scan läuft …${progress}`);
+      if (!polling) {
+        this.startPolling();
+      }
+      return;
+    }
+    this.poll?.unsubscribe();
+    this.poll = null;
+    this.scanBusy.set(false);
+    if (polling) {
+      const result = run ? SCAN_RESULT_LABELS[run.status] ?? run.status : 'beendet';
+      this.scanStatus.set(`Scan abgeschlossen: ${result}.`);
+    }
   }
 }

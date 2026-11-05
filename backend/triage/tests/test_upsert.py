@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -141,3 +141,14 @@ def test_rescan_with_same_cves_keeps_waiting_finding(repo):
     upsert_finding(cand(repo, Vuln("CVE-2026-0001", "HIGH", "4.17.19")), now=NOW)
     f.refresh_from_db()
     assert (f.state, f.merge_commit_sha) == ("PR_MERGED_WAITING_LIVE", "m1")
+
+
+def test_severity_rise_to_critical_on_kev_finding_switches_to_wall_clock(repo):
+    f = upsert_finding(cand(repo, Vuln("CVE-2026-0001", "HIGH", "4.17.19")), now=NOW).finding
+    f.kev_listed = True
+    f.deadline_at = datetime(2026, 11, 20, 7, 0, tzinfo=BER)
+    f.save()
+    upsert_finding(cand(repo, Vuln("CVE-2026-0001", "CRITICAL", "4.17.19")), now=NOW)
+    f.refresh_from_db()
+    assert f.highest_severity == "CRITICAL"
+    assert f.deadline_at == NOW + timedelta(hours=24)

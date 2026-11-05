@@ -10,7 +10,8 @@ from django.db import transaction
 from django.utils import timezone
 
 from research.models import ExploitSignal
-from triage.clock import deadline_for, uses_wall_clock
+from triage.clock import uses_wall_clock
+from triage.findings import tighten_to_wall_clock
 
 KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
 EPSS_URL = "https://api.first.org/data/v1/epss"
@@ -77,10 +78,7 @@ def apply_signals(finding) -> bool:
     )
     finding.kev_listed = kev
     finding.max_epss = epss
-    if became_wall_clock and finding.state == "NEW":
-        finding.deadline_at = deadline_for(
-            stage="NEW", complexity=finding.complexity, severity=finding.highest_severity,
-            kev_listed=True, start=finding.discovered_at,
-        )
+    if became_wall_clock:
+        tighten_to_wall_clock(finding)  # every open stage, not only NEW (spec §6.2, D-2)
     finding.save()
     return True

@@ -75,3 +75,19 @@ def test_kev_critical_new_finding_switches_to_wall_clock_deadline():
     apply_signals(f)
     f.refresh_from_db()
     assert f.deadline_at == discovered + timedelta(hours=24)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("state,start_field,window", [
+    ("IN_PROGRESS", "acknowledged_at", timedelta(days=7)),  # COMPLEX: 7 days wall clock
+    ("PR_MERGED_WAITING_LIVE", "pr_merged_at", timedelta(hours=24)),
+])
+def test_kev_listing_switches_open_findings_beyond_new_to_wall_clock(state, start_field, window):
+    start = datetime(2026, 11, 6, 7, 0, tzinfo=BER)  # Friday
+    ExploitSignal.objects.create(cve_id="CVE-2026-0001", kev_listed=True)
+    f = make_finding(vulnerability_ids=["CVE-2026-0001"], highest_severity="CRITICAL", state=state,
+                     complexity="COMPLEX", discovered_at=start - timedelta(days=1), **{start_field: start},
+                     deadline_at=start + timedelta(days=30))
+    apply_signals(f)
+    f.refresh_from_db()
+    assert f.deadline_at == start + window

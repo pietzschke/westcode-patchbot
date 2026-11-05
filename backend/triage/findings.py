@@ -9,7 +9,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from triage.candidates import Candidate
-from triage.clock import deadline_for
+from triage.clock import deadline_for, uses_wall_clock
 from triage.models import OPEN_STATES, PARKED_STATES, SEVERITY_RANK, TERMINAL_STATES, Finding, FindingEvent
 from triage.versions import compare_versions, max_version
 
@@ -38,11 +38,35 @@ def _max_severity(*severities: str) -> str:
     return max((s or "UNKNOWN" for s in severities), key=lambda s: SEVERITY_RANK.get(s, 0))
 
 
+def _stage_start(finding: Finding) -> datetime:
+    if finding.state == "PR_MERGED_WAITING_LIVE" and finding.pr_merged_at:
+        return finding.pr_merged_at
+    if finding.state in ("IN_PROGRESS", "PR_MERGED_WAITING_LIVE") and finding.acknowledged_at:
+        return finding.acknowledged_at
+    return finding.discovered_at
+
+
+def tighten_to_wall_clock(finding: Finding) -> bool:
+    """KEV-listed CRITICAL findings run on wall-clock time in every open stage (spec §6.2, D-2). Called when a
+    finding becomes KEV+CRITICAL; only ever shortens the current deadline. The caller saves."""
+    if finding.state not in OPEN_STATES or not uses_wall_clock(finding.highest_severity, finding.kev_listed):
+        return False
+    deadline = deadline_for(stage=finding.state, complexity=finding.complexity, severity=finding.highest_severity,
+                            kev_listed=True, start=_stage_start(finding))
+    if finding.deadline_at is not None and finding.deadline_at <= deadline:
+        return False
+    finding.deadline_at = deadline
+    return True
+
+
 def _merge_into(finding: Finding, candidate: Candidate, cve_ids: list[str], severity: str, target: str) -> bool:
     """Merge a rescan into an existing finding; returns True if the target version was raised."""
     old_target = finding.target_version
+    was_wall_clock = uses_wall_clock(finding.highest_severity, finding.kev_listed)
     finding.vulnerability_ids = sorted(set(finding.vulnerability_ids) | set(cve_ids))
     finding.highest_severity = _max_severity(finding.highest_severity, severity)
+    if not was_wall_clock:
+        tighten_to_wall_clock(finding)  # severity rose to CRITICAL on an already KEV-listed finding
     finding.target_version = max_version(candidate.ecosystem, [old_target, target])
     finding.current_version = candidate.current_version or finding.current_version
     finding.save()

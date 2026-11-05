@@ -116,5 +116,23 @@ class BranchWorktrees:
                         cwd=str(path))
         return True
 
+    def diff(self, path: Path):
+        """Staged changes as ChangedFile entries (paths, line counts and added text) for the diff gate."""
+        from research.diff_gate import ChangedFile
+
+        self.cache._git("add", "--all", cwd=str(path))
+        counts: dict[str, tuple[int, int]] = {}
+        for line in self.cache._git("diff", "--cached", "--numstat", cwd=str(path)).splitlines():
+            added, removed, name = line.split("\t", 2)
+            counts[name] = (int(added) if added.isdigit() else 0, int(removed) if removed.isdigit() else 0)
+        added_text: dict[str, list[str]] = {name: [] for name in counts}
+        current = None
+        for line in self.cache._git("diff", "--cached", "-U0", "--no-color", cwd=str(path)).splitlines():
+            if line.startswith("+++ "):
+                current = line[6:] if line.startswith("+++ b/") else None
+            elif line.startswith("+") and current in added_text:
+                added_text[current].append(line[1:])
+        return [ChangedFile(name, a, r, "\n".join(added_text[name])) for name, (a, r) in counts.items()]
+
     def release(self, path: Path) -> None:
         self.cache.release(CheckoutInfo(path=Path(path), commit_sha=""))

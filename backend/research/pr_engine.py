@@ -17,18 +17,20 @@ from django.utils import timezone
 
 from research.bot_prs import parse_bot_pr
 from research.bumper import BumpFailed
+from research.diff_gate import DiffRejected, check_diff
 from triage.findings import log_event
 from triage.models import Finding
 from triage.versions import compare_versions
 
 TRIAGE_MARKER = "<!-- patchbot:triage -->"
 PR_LABELS = ["patchbot", "security"]
+AI_LABEL = "patchbot:ai-generated"
 ACTIONABLE_STATES = ("NEW", "IN_PROGRESS")
 
 
 @dataclass
 class PrOutcome:
-    action: str  # BOT_REUSED | PR_CREATED | EXISTING | SKIPPED | BUMP_FAILED
+    action: str  # BOT_REUSED | PR_CREATED | EXISTING | SKIPPED | BUMP_FAILED | PATCH_FAILED | PATCH_REJECTED
     pr_number: int | None = None
     detail: str = ""
 
@@ -90,7 +92,7 @@ def _existing_pr(finding: Finding, github) -> PrOutcome | None:
     return None
 
 
-def _reuse_bot_pr(finding: Finding, github) -> PrOutcome | None:
+def _reuse_bot_pr(finding: Finding, github, *, bumper=None, worktrees=None, patcher=None) -> PrOutcome | None:
     repo = finding.repository.full_name
     for pull in github.list_open_pulls(repo):
         bot = parse_bot_pr(pull)
@@ -101,8 +103,55 @@ def _reuse_bot_pr(finding: Finding, github) -> PrOutcome | None:
         github.upsert_marker_comment(repo, bot.number, TRIAGE_MARKER, render_triage_comment(finding))
         _record_pr(finding, number=bot.number, url=bot.html_url, source="BOT", draft=bot.draft,
                    note=f"Bestehenden Bot-PR #{bot.number} übernommen und Triage kommentiert.")
+        if finding.complexity == "COMPLEX" and patcher is not None and bot.head_ref:
+            # Never push to the bot branch: code changes go into a companion Draft-PR based on it.
+            outcome, pr = _ai_patch(finding, github, bumper, worktrees, patcher, base=bot.head_ref, bump=False)
+            if pr is not None:
+                _log(finding, f"Begleit-Draft-PR #{pr['number']} mit Code-Anpassungen für Bot-PR #{bot.number} erstellt: {pr['html_url']}")
         return PrOutcome("BOT_REUSED", bot.number)
     return None
+
+
+def _log(finding: Finding, note: str) -> None:
+    log_event(finding, source="SYSTEM", from_state=finding.state, to_state=finding.state, note=note, at=timezone.now())
+
+
+def _ai_patch(finding: Finding, github, bumper, worktrees, patcher, *, base: str, bump: bool):
+    """Claude patches code in a sandbox; the diff gate decides; result is always a Draft-PR."""
+    repo = finding.repository
+    branch = branch_name(finding)
+    path = worktrees.create(repo.full_name, base, branch)
+    try:
+        if bump:
+            try:
+                bumper.bump(path, finding.ecosystem, finding.package_name, finding.target_version)
+            except BumpFailed as exc:
+                _log(finding, f"Automatischer Bump fehlgeschlagen, Code-Anpassung nicht möglich: {exc}")
+                return PrOutcome("PATCH_FAILED", detail=str(exc)), None
+        result = patcher(finding, path)
+        if result.status != "DONE":
+            _log(finding, f"Automatische Code-Anpassung nicht abgeschlossen ({result.status}). {result.note}".strip())
+            return PrOutcome("PATCH_FAILED", detail=result.status), None
+        try:
+            check_diff(worktrees.diff(path))
+        except DiffRejected as exc:
+            _log(finding, f"Code-Anpassung durch Diff-Gate abgelehnt: {exc}")
+            return PrOutcome("PATCH_REJECTED", detail=str(exc)), None
+        if not worktrees.commit_all(path, f"fix(security): adapt code for {finding.package_name} {finding.target_version}"):
+            return PrOutcome("SKIPPED", detail="no changes"), None
+        github.push_branch(repo.full_name, branch, path)
+        pr = github.create_pull(
+            repo.full_name,
+            head=branch,
+            base=base,
+            title=f"[Draft] {finding.package_name} {finding.target_version}: Code-Anpassungen (KI-generiert)",
+            body=render_pr_body(finding) + "\n\n> ⚠️ Code von Claude erzeugt – bitte sorgfältig reviewen.",
+            draft=True,
+            labels=PR_LABELS + [AI_LABEL],
+        )
+        return PrOutcome("PR_CREATED", pr["number"]), pr
+    finally:
+        worktrees.release(path)
 
 
 def _deterministic_pr(finding: Finding, github, bumper, worktrees) -> PrOutcome:
@@ -138,15 +187,21 @@ def _deterministic_pr(finding: Finding, github, bumper, worktrees) -> PrOutcome:
     return PrOutcome("PR_CREATED", pr["number"])
 
 
-def ensure_pr(finding: Finding, *, github, bumper, worktrees, sandbox=None, llm=None, now=None) -> PrOutcome:
+def ensure_pr(finding: Finding, *, github, bumper, worktrees, patcher=None, now=None) -> PrOutcome:
     if finding.layer != "APPLICATION" or finding.repository is None or finding.state not in ACTIONABLE_STATES:
         return PrOutcome("SKIPPED", detail="not actionable")
     existing = _existing_pr(finding, github)
     if existing is not None:
         return existing
-    reused = _reuse_bot_pr(finding, github)
+    reused = _reuse_bot_pr(finding, github, bumper=bumper, worktrees=worktrees, patcher=patcher)
     if reused is not None:
         return reused
     if finding.complexity == "SIMPLE":
         return _deterministic_pr(finding, github, bumper, worktrees)
-    return PrOutcome("SKIPPED", detail="complex fix needs the code-patching sandbox or a human")
+    if patcher is None:
+        return PrOutcome("SKIPPED", detail="complex fix needs the code-patching sandbox or a human")
+    outcome, pr = _ai_patch(finding, github, bumper, worktrees, patcher, base=finding.repository.default_branch, bump=True)
+    if pr is not None:
+        _record_pr(finding, number=pr["number"], url=pr["html_url"], source="PATCHBOT_AI", draft=True,
+                   note=f"Draft-PR #{pr['number']} mit KI-generierten Code-Anpassungen erstellt.")
+    return outcome

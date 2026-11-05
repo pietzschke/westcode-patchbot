@@ -1923,6 +1923,8 @@ def test_existing_open_patchbot_pr_is_not_duplicated():
 
 **Spec:** §5.5 (case 3, sandbox, diff gate), §7.4.
 
+**As built:** `ensure_pr(..., patcher=None)` takes a `patcher(finding, worktree) -> PatchLoopResult` (production: `SandboxPatcher`), and the worktree interface gains `diff(path)` for the diff gate. Without a patcher, COMPLEX findings are left for humans.
+
 **Design note (reflected in spec §5.5):** the Claude tool-use loop runs **in the worker**. The sandbox container only executes the tool calls (file read/write inside `/work`, allow-listed commands). The sandbox therefore needs **no Anthropic key** and egress only to the package registry.
 
 **Files:**

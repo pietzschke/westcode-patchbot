@@ -78,3 +78,17 @@ def test_branch_worktree_commits_changes_on_new_branch(tmp_path, remote):
     assert (branch, author) == ("patchbot/lodash-4.17.21", "Westcode Patchbot")
     worktrees.release(path)
     assert not path.exists()
+
+
+def test_branch_worktree_diff_reports_paths_counts_and_added_text(tmp_path, remote):
+    from research.repo_cache import BranchWorktrees
+
+    remotes, _ = remote
+    worktrees = BranchWorktrees(RepoCache(tmp_path / "cache", remote_template=f"file://{remotes}/{{repo}}"))
+    path = worktrees.create("westcoder/mdb", "main", "patchbot/x-1")
+    (path / "src").mkdir()
+    (path / "src/a.ts").write_text("one\ntwo\n")
+    changed = {c.path: c for c in worktrees.diff(path)}
+    assert changed["src/a.ts"].added_lines == 2
+    assert changed["src/a.ts"].added_text == "one\ntwo"
+    worktrees.release(path)

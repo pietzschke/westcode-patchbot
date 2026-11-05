@@ -21,7 +21,7 @@ from django.utils import timezone
 
 from research.evidence import find_call_sites, is_dev_only
 from research.models import TriageAnalysisCache
-from triage.findings import _start_new, log_event
+from triage.findings import log_event, reopen_state
 from triage.models import Finding
 
 logger = logging.getLogger(__name__)
@@ -104,9 +104,26 @@ def validate_result(data: object) -> TriageResult | None:
     return result
 
 
+def blocks_filtering(finding) -> bool:
+    """Signals under which a finding may never be (or stay) FILTERED_IRRELEVANT — policy gate rule 1."""
+    return finding.highest_severity == "CRITICAL" or finding.kev_listed or finding.max_epss >= FILTER_MAX_EPSS
+
+
+def lift_filter_if_blocked(finding, *, now=None) -> bool:
+    """Reopen a filtered finding once severity, KEV or EPSS rule out filtering — independent of Claude."""
+    if finding.state != "FILTERED_IRRELEVANT" or not blocks_filtering(finding):
+        return False
+    now = now or timezone.now()
+    reopen_state(finding, now)
+    finding.save()
+    log_event(finding, source="SYSTEM", from_state="FILTERED_IRRELEVANT", to_state=finding.state, at=now,
+              note="Filter aufgehoben: Policy-Gate greift nicht mehr (Schweregrad, KEV oder EPSS).")
+    return True
+
+
 def policy_gate(finding, result: TriageResult, evidence: dict) -> bool:
     """True only if the finding may be suppressed as FILTERED_IRRELEVANT."""
-    if finding.highest_severity == "CRITICAL" or finding.kev_listed or finding.max_epss >= FILTER_MAX_EPSS:
+    if blocks_filtering(finding):
         return False
     if result.reachability != "NOT_REACHABLE" or result.confidence < FILTER_MIN_CONFIDENCE:
         return False
@@ -254,9 +271,9 @@ def apply_triage(finding: Finding, *, client, checkout: Path | None, now=None) -
         log_event(finding, source="SYSTEM", from_state=previous, to_state="FILTERED_IRRELEVANT", at=now,
                   note=f"Automatisch gefiltert ({result.reachability_reason_category}, Konfidenz {result.confidence:.2f}).")
     elif not suppress and finding.state == "FILTERED_IRRELEVANT":
-        _start_new(finding, now)
+        reopen_state(finding, now)
         finding.save()
-        log_event(finding, source="SYSTEM", from_state="FILTERED_IRRELEVANT", to_state="NEW", at=now,
+        log_event(finding, source="SYSTEM", from_state="FILTERED_IRRELEVANT", to_state=finding.state, at=now,
                   note="Filter aufgehoben: Policy-Gate greift nicht mehr (Schweregrad, KEV oder EPSS).")
     else:
         finding.save()

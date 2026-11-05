@@ -20,7 +20,7 @@ from research.models import ImageScanCache, ScanRun
 from research.pr_engine import ensure_pr
 from research.scan_runs import finalize_scan_run, start_scan_run
 from research.signals_feed import apply_signals
-from research.triage_ai import apply_triage
+from research.triage_ai import apply_triage, lift_filter_if_blocked
 from triage.findings import log_event
 from triage.models import OPEN_STATES
 from triage.notifications import record_health, send_new_finding_dms
@@ -64,6 +64,7 @@ def run_scan(
 
         for finding in result.findings:
             apply_signals(finding)
+            lift_filter_if_blocked(finding, now=now)
         for finding in result.findings:
             if finding.triage_status == "UNTRIAGED" or finding.state == "FILTERED_IRRELEVANT":
                 checkout = result.checkouts.get(finding.repository.full_name) if finding.repository else None

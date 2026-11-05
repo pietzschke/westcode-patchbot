@@ -150,3 +150,22 @@ def test_failed_repo_sync_marks_github_integration_failing():
     health = IntegrationHealth.objects.get(name="github")
     assert health.ok is False
     assert "GitHub down" in health.last_error
+
+
+@pytest.mark.django_db
+def test_rescan_lifts_filter_when_cve_becomes_kev_listed():
+    from research.models import ExploitSignal
+    from testing.factories import make_finding
+
+    repo = make_repo(full_name="westcoder/mdb", project=make_project(slug="wuerth"))
+    filtered = make_finding(repository=repo, state="FILTERED_IRRELEVANT", ecosystem="npm", package_name="lodash",
+                            vulnerability_ids=["CVE-2026-0001"], target_version="4.17.21", triage_status="TRIAGED")
+    ExploitSignal.objects.create(cve_id="CVE-2026-0001", kev_listed=True)
+
+    # No Claude (llm=None): the deterministic reopen rule alone must lift the filter.
+    scan(github=FakeGitHub(), slack=FakeSlack(), llm=None)
+
+    filtered.refresh_from_db()
+    assert filtered.kev_listed is True
+    assert filtered.state == "NEW"
+    assert filtered.events.filter(from_state="FILTERED_IRRELEVANT", to_state="NEW").exists()

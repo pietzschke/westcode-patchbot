@@ -79,14 +79,16 @@ def test_new_cve_on_dismissed_key_reopens(repo):
     assert (f.dismissal_mode, f.dismissal_reason, f.dismissed_at, f.dismissed_severity) == ("", "", None, "")
 
 
-@pytest.mark.parametrize("parked", ["SNOOZED", "FILTERED_IRRELEVANT", "SUPPRESSED_UNMONITORED"])
-def test_parked_findings_absorb_rescans(repo, parked):
+@pytest.mark.parametrize("parked,muted", [("SNOOZED", True), ("FILTERED_IRRELEVANT", False),
+                                          ("SUPPRESSED_UNMONITORED", True)])
+def test_parked_findings_absorb_rescans(repo, parked, muted):
+    # Filtered findings are not muted: the scan pipeline re-evaluates them (spec §5.4).
     f = upsert_finding(cand(repo, Vuln("CVE-2026-0001", "MEDIUM", "4.17.19")), now=NOW).finding
     f.state = parked
     f.save()
     result = upsert_finding(cand(repo, Vuln("CVE-2026-0002", "HIGH", "4.17.21")), now=NOW)
     f.refresh_from_db()
-    assert result.muted is True
+    assert result.muted is muted
     assert Finding.objects.count() == 1
     assert f.state == parked
     assert f.highest_severity == "HIGH"

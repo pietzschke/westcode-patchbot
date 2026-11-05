@@ -96,9 +96,11 @@ def test_signals_refresh_updates_parked_findings_and_reopens_on_new_kev(monkeypa
                              dismissed_at=NOW - timedelta(days=3), dismissed_severity="HIGH",
                              dismissed_kev_listed=False)
     filtered = make_finding(state="FILTERED_IRRELEVANT", vulnerability_ids=["CVE-2026-4343"])
+    quiet = make_finding(state="FILTERED_IRRELEVANT", vulnerability_ids=["CVE-2026-4444"])
 
     kev_feed = {"vulnerabilities": [{"cveID": cve, "dateAdded": "2026-11-08"}]}
-    epss_feed = {"data": [{"cve": cve, "epss": "0.91"}, {"cve": "CVE-2026-4343", "epss": "0.12"}]}
+    epss_feed = {"data": [{"cve": cve, "epss": "0.91"}, {"cve": "CVE-2026-4343", "epss": "0.12"},
+                          {"cve": "CVE-2026-4444", "epss": "0.02"}]}
     epss_requests = []
 
     def fake_epss(ids):
@@ -119,4 +121,7 @@ def test_signals_refresh_updates_parked_findings_and_reopens_on_new_kev(monkeypa
     assert dismissed.state == "NEW"
     filtered = Finding.objects.get(id=filtered.id)
     assert filtered.max_epss == pytest.approx(0.12)
-    assert filtered.state == "FILTERED_IRRELEVANT"
+    # EPSS ≥ 0.10 blocks the policy gate → the filter is lifted without waiting for a rescan (spec §5.4).
+    assert filtered.state == "NEW"
+    assert filtered.events.filter(from_state="FILTERED_IRRELEVANT", to_state="NEW").exists()
+    assert Finding.objects.get(id=quiet.id).state == "FILTERED_IRRELEVANT"

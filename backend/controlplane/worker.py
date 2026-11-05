@@ -17,6 +17,7 @@ from research.maintenance import request_analysis
 from research.models import MaintenanceUpdate
 from research.pipeline import lookup_image_scan, run_scan
 from research.signals_feed import apply_signals, refresh_epss, refresh_kev
+from research.triage_ai import lift_filter_if_blocked
 from triage.dismissal import evaluate_reopen_rules
 from triage.jobs import enqueue
 from triage.models import OPEN_STATES, PARKED_STATES, Finding, Job, ScheduleState
@@ -71,6 +72,7 @@ def _signals_refresh(job, d: Deps, now):
     refresh_epss(cves)
     for finding in tracked:
         apply_signals(finding)
+        lift_filter_if_blocked(finding, now=now)  # spec §5.4: filtered findings are re-evaluated on signal changes
     evaluate_reopen_rules(now=now)
 
 

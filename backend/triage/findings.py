@@ -118,6 +118,9 @@ def upsert_finding(candidate: Candidate, *, now: datetime | None = None) -> Upse
             log_event(parked, source="SYSTEM", from_state=previous, to_state=parked.state,
                       note="Neue CVE für ein als „nicht betroffen“ markiertes Paket.", at=now)
             return UpsertResult(parked)
+        if parked.state == "FILTERED_IRRELEVANT":
+            # Not muted: the pipeline re-evaluates filtered findings against fresh signals (spec §5.4).
+            return UpsertResult(parked)
         return UpsertResult(parked, muted=True)
 
     previous = same_key.filter(state__in=TERMINAL_STATES).order_by("-id").first()

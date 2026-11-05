@@ -13,11 +13,14 @@ const DATA: TriageProjectsDto = {
       repositories: [{ id: 3, type: 'repository', name: 'westcoder/materialdatenbank', suggested_project: null,
         deployment_mode: 'UNKNOWN' }],
       hosts: [{ id: 4, type: 'host', name: 'mdb.westcode.de', suggested_project: null }],
+      containers: [{ id: 5, type: 'container', name: 'mdb.westcode.de: app', image: 'ghcr.io/westcoder/mdb:1.4',
+        suggested_project: null }],
       open_findings: 2,
     },
     {
       slug: 'alt', name: 'Altkunde', customer_name: '', is_internal: false, notion_status: 'Done', notion_missing: true,
-      is_monitored: false, owner: null, last_notion_synced_at: null, repositories: [], hosts: [], open_findings: 0,
+      is_monitored: false, owner: null, last_notion_synced_at: null, repositories: [], hosts: [], containers: [],
+      open_findings: 0,
     },
   ],
   unassigned_assets: {
@@ -99,6 +102,49 @@ describe('ProjectsPage', () => {
     const req = http.expectOne('/api/repositories/3/');
     expect(req.request.method).toBe('PATCH');
     expect(req.request.body).toEqual({ deployment_mode: 'CONTAINER' });
+  });
+
+  it('lists the containers assigned to a project', () => {
+    const { el } = setup();
+    const card = el.querySelector('[data-project="wuerth"]')!;
+    const rows = Array.from(card.querySelectorAll('.asset-row')).map((r) => r.textContent ?? '');
+    expect(rows.some((r) => r.includes('mdb.westcode.de: app') && r.includes('Container'))).toBe(true);
+  });
+
+  it('moves an assigned asset to another project', () => {
+    const { fixture, http, el } = setup();
+    const row = el.querySelector('[data-project="wuerth"] [data-asset="container:5"]')!;
+    const select = row.querySelector<HTMLSelectElement>('.reassign-select')!;
+    expect(Array.from(select.options).map((o) => o.value)).toEqual(['', 'alt']);
+    select.value = 'alt';
+    select.dispatchEvent(new Event('change'));
+    fixture.detectChanges();
+    row.querySelector<HTMLButtonElement>('.move-btn')!.click();
+    const req = http.expectOne('/api/assets/container/5/assign/');
+    expect(req.request.body).toEqual({ project_slug: 'alt' });
+    req.flush({});
+    http.expectOne('/api/triage-projects/').flush(DATA);
+  });
+
+  it('removes an assigned asset from its project', () => {
+    const { http, el } = setup();
+    el.querySelector<HTMLButtonElement>('[data-project="wuerth"] [data-asset="host:4"] .unassign-btn')!.click();
+    const req = http.expectOne('/api/assets/host/4/assign/');
+    expect(req.request.body).toEqual({ project_slug: null });
+  });
+
+  it('shows no reassignment controls to non-admins', () => {
+    const { el } = setup(false);
+    expect(el.querySelector('.reassign-select')).toBeNull();
+    expect(el.querySelector('.unassign-btn')).toBeNull();
+  });
+
+  it('shows the API error when an assignment fails', () => {
+    const { fixture, http, el } = setup();
+    el.querySelector<HTMLButtonElement>('[data-project="wuerth"] [data-asset="host:4"] .unassign-btn')!.click();
+    http.expectOne('/api/assets/host/4/assign/').flush({ detail: 'Unbekanntes Projekt.' }, { status: 400, statusText: 'Bad Request' });
+    fixture.detectChanges();
+    expect(el.querySelector('.plan-check-note')?.textContent).toContain('Unbekanntes Projekt.');
   });
 
   it('marks projects that disappeared from Notion', () => {

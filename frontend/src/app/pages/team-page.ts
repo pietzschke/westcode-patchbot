@@ -1,5 +1,6 @@
 import { Component, OnInit, inject, signal } from '@angular/core';
 import { HttpErrorResponse } from '@angular/common/http';
+import { apiErrorText } from '../core/api-error';
 import { AuthService } from '../core/auth';
 import { PatchbotApi, TeamMemberDto } from '../core/patchbot-api';
 
@@ -23,24 +24,6 @@ interface MemberDraft {
 
 type DraftFlag = 'is_admin' | 'is_default_infra_owner' | 'is_active';
 type DraftText = 'name' | 'email' | 'github_username' | 'slack_user_id';
-
-/** Flattens the `detail` of a DRF error response (string, list or field → messages map). */
-export function apiErrorText(err: HttpErrorResponse, fallback: string): string {
-  const detail: unknown = err.error?.detail;
-  if (typeof detail === 'string' && detail) {
-    return detail;
-  }
-  if (Array.isArray(detail) && detail.length) {
-    return detail.join(' ');
-  }
-  if (detail && typeof detail === 'object') {
-    const messages = Object.values(detail as Record<string, unknown>).flatMap((v) => (Array.isArray(v) ? v : [v]));
-    if (messages.length) {
-      return messages.join(' ');
-    }
-  }
-  return fallback;
-}
 
 @Component({
   selector: 'app-team-page',

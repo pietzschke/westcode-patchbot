@@ -213,6 +213,7 @@ export interface TriageProjectDto {
   last_notion_synced_at: string | null;
   repositories: AssetDto[];
   hosts: AssetDto[];
+  containers: AssetDto[];
   open_findings: number;
 }
 

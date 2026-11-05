@@ -1,6 +1,9 @@
+import { NgTemplateOutlet } from '@angular/common';
+import { HttpErrorResponse } from '@angular/common/http';
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { apiErrorText } from '../core/api-error';
 import { AuthService } from '../core/auth';
-import { AssetDto, PatchbotApi, TriageProjectsDto } from '../core/patchbot-api';
+import { AssetDto, PatchbotApi, TriageProjectDto, TriageProjectsDto } from '../core/patchbot-api';
 
 const DEPLOYMENT_MODES = [
   { value: 'UNKNOWN', label: 'Unbekannt' },
@@ -12,6 +15,7 @@ const DEPLOYMENT_MODES = [
 @Component({
   selector: 'app-projects-page',
   standalone: true,
+  imports: [NgTemplateOutlet],
   template: `
     <main class="page">
       <div class="page-head">
@@ -92,7 +96,7 @@ const DEPLOYMENT_MODES = [
             </div>
             <ul class="service-list">
               @for (r of p.repositories; track r.id) {
-                <li class="asset-row">
+                <li class="asset-row" [attr.data-asset]="key(r)">
                   <span class="finding-title">{{ r.name }}</span>
                   @if (auth.isAdmin()) {
                     <select class="deployment-select" (change)="setDeployment(r, $any($event.target).value)">
@@ -103,12 +107,23 @@ const DEPLOYMENT_MODES = [
                   } @else {
                     <span class="finding-sub">{{ deploymentLabel(r.deployment_mode) }}</span>
                   }
+                  <ng-container *ngTemplateOutlet="assignedActions; context: { $implicit: r, project: p.slug }" />
                 </li>
               }
               @for (h of p.hosts; track h.id) {
-                <li class="asset-row"><span>{{ h.name }}</span><span class="finding-sub">Host</span></li>
+                <li class="asset-row" [attr.data-asset]="key(h)">
+                  <span>{{ h.name }}</span><span class="finding-sub">Host</span>
+                  <ng-container *ngTemplateOutlet="assignedActions; context: { $implicit: h, project: p.slug }" />
+                </li>
               }
-              @if (p.repositories.length === 0 && p.hosts.length === 0) {
+              @for (c of p.containers; track c.id) {
+                <li class="asset-row" [attr.data-asset]="key(c)">
+                  <span>{{ c.name }}</span>
+                  <span class="finding-sub">Container{{ c.image ? ' · ' + c.image : '' }}</span>
+                  <ng-container *ngTemplateOutlet="assignedActions; context: { $implicit: c, project: p.slug }" />
+                </li>
+              }
+              @if (p.repositories.length === 0 && p.hosts.length === 0 && p.containers.length === 0) {
                 <li class="empty-state">Noch keine Assets zugeordnet.</li>
               }
             </ul>
@@ -117,6 +132,22 @@ const DEPLOYMENT_MODES = [
       } @else {
         <p class="page-sub">Lade Projekte…</p>
       }
+
+      <ng-template #assignedActions let-asset let-current="project">
+        @if (auth.isAdmin()) {
+          <span class="asset-actions">
+            <select class="reassign-select" [attr.aria-label]="asset.name + ' verschieben'"
+              (change)="assignTarget.set(key(asset), $any($event.target).value)">
+              <option value="">Verschieben nach…</option>
+              @for (other of otherProjects(current); track other.slug) {
+                <option [value]="other.slug">{{ other.name }}</option>
+              }
+            </select>
+            <button type="button" class="btn-link move-btn" (click)="assign(asset)">Verschieben</button>
+            <button type="button" class="btn-link unassign-btn" (click)="unassign(asset)">Zuordnung lösen</button>
+          </span>
+        }
+      </ng-template>
     </main>
   `,
 })
@@ -149,6 +180,10 @@ export class ProjectsPage implements OnInit {
     return type === 'repository' ? 'Repository' : type === 'host' ? 'Host' : 'Container';
   }
 
+  otherProjects(currentSlug: string): TriageProjectDto[] {
+    return (this.data()?.projects ?? []).filter((p) => p.slug !== currentSlug);
+  }
+
   deploymentLabel(mode?: string): string {
     return DEPLOYMENT_MODES.find((m) => m.value === mode)?.label ?? 'Unbekannt';
   }
@@ -156,7 +191,7 @@ export class ProjectsPage implements OnInit {
   confirm(asset: AssetDto): void {
     this.api.confirmSuggestion(asset.type, asset.id).subscribe({
       next: () => this.reload(),
-      error: () => this.notice.set('Vorschlag konnte nicht übernommen werden.'),
+      error: (err: HttpErrorResponse) => this.notice.set(apiErrorText(err, 'Vorschlag konnte nicht übernommen werden.')),
     });
   }
 
@@ -166,9 +201,21 @@ export class ProjectsPage implements OnInit {
       this.notice.set('Bitte zuerst ein Projekt wählen.');
       return;
     }
+    this.saveAssignment(asset, slug);
+  }
+
+  unassign(asset: AssetDto): void {
+    this.saveAssignment(asset, null);
+  }
+
+  private saveAssignment(asset: AssetDto, slug: string | null): void {
     this.api.assignAsset(asset.type, asset.id, slug).subscribe({
-      next: () => this.reload(),
-      error: () => this.notice.set('Zuordnung fehlgeschlagen.'),
+      next: () => {
+        this.assignTarget.delete(this.key(asset));
+        this.notice.set('');
+        this.reload();
+      },
+      error: (err: HttpErrorResponse) => this.notice.set(apiErrorText(err, 'Zuordnung fehlgeschlagen.')),
     });
   }
 

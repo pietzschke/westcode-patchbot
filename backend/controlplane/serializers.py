@@ -104,6 +104,7 @@ def project_dict(p: Project) -> dict:
         "owner": member_ref(p.owner), "last_notion_synced_at": _iso(p.last_notion_synced_at),
         "repositories": [repository_dict(r) for r in p.repositories.all()],
         "hosts": [host_ref(h) for h in p.hosts.all()],
+        "containers": [container_ref(c) for c in p.containers.all()],
         "open_findings": p.findings.filter(state__in=("NEW", "IN_PROGRESS", "PR_MERGED_WAITING_LIVE")).count(),
     }
 

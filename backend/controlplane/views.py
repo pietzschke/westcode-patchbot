@@ -126,7 +126,8 @@ class MaintenanceAnalysisView(APIView):
 
 class ProjectsView(APIView):
     def get(self, request: Request) -> Response:
-        projects = Project.objects.select_related("owner").prefetch_related("repositories", "hosts")
+        projects = Project.objects.select_related("owner").prefetch_related(
+            "repositories", "hosts", "containers__host")
         return Response({
             "projects": [project_dict(p) for p in projects],
             "unassigned_assets": {
@@ -159,6 +160,16 @@ class MonitoringView(APIView):
         return Response(project_dict(project))
 
 
+def _propagate_repository_project(asset) -> None:
+    """Containers built from a repository follow its project unless they were assigned explicitly (review H-9).
+
+    The OCI-source link may have been made while the repository had no project yet; without this the
+    container would stay unassigned and its running image would never be scanned.
+    """
+    if isinstance(asset, RepositoryAsset) and asset.project_id is not None:
+        HostContainer.objects.filter(repository=asset, project__isnull=True).update(project_id=asset.project_id)
+
+
 def _asset(asset_type: str, asset_id: int):
     model = ASSET_MODELS.get(asset_type)
     if model is None:
@@ -174,7 +185,9 @@ class AssetConfirmView(APIView):
         if asset is None:
             return Response(status=status.HTTP_404_NOT_FOUND)
         try:
-            confirm_suggestion(asset)
+            with transaction.atomic():
+                confirm_suggestion(asset)
+                _propagate_repository_project(asset)
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response({"id": asset.id, "project": asset.project.slug if asset.project else None})
@@ -195,7 +208,9 @@ class AssetAssignView(APIView):
                 return Response({"detail": "Unbekanntes Projekt."}, status=status.HTTP_400_BAD_REQUEST)
         asset.project = project
         asset.suggested_project = None
-        asset.save(update_fields=["project", "suggested_project"])
+        with transaction.atomic():
+            asset.save(update_fields=["project", "suggested_project"])
+            _propagate_repository_project(asset)
         return Response({"id": asset.id, "project": slug or None})
 
 

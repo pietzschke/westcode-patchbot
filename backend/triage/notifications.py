@@ -4,7 +4,8 @@
 - unassigned findings go to the team channel;
 - each escalation stage is posted exactly once, only on working days 08:00–18:00
   (KEV-listed CRITICAL findings immediately);
-- NotificationLog makes every send idempotent; failures are retried next run.
+- NotificationLog makes every send idempotent (NEW DMs once per NEW cycle, keyed by
+  ``discovered_at``); failures are retried next run.
 """
 
 from __future__ import annotations
@@ -62,10 +63,19 @@ def _log_sent(findings: list[Finding], kind: str, stage: int, recipient: str, ts
             pass
 
 
+def _new_cycle_stage(finding: Finding) -> int:
+    """NEW_DM dedup key: one DM per NEW cycle. Every (re)entry into NEW resets ``discovered_at``."""
+    return int(finding.discovered_at.timestamp())
+
+
 def send_new_finding_dms(*, slack, now: datetime | None = None) -> int:
     now = now or timezone.now()
-    already = set(NotificationLog.objects.filter(kind="NEW_DM").values_list("finding_id", flat=True))
-    pending = [f for f in Finding.objects.filter(state="NEW").select_related("project", "assignee") if f.id not in already]
+    already = set(NotificationLog.objects.filter(kind="NEW_DM").values_list("finding_id", "stage"))
+    pending = [
+        f
+        for f in Finding.objects.filter(state="NEW").select_related("project", "assignee")
+        if (f.id, _new_cycle_stage(f)) not in already
+    ]
     groups: dict[str, list[Finding]] = defaultdict(list)
     for f in pending:
         recipient = f.assignee.slack_user_id if f.assignee and f.assignee.slack_user_id else settings.SLACK_TEAM_CHANNEL_ID
@@ -88,7 +98,8 @@ def send_new_finding_dms(*, slack, now: datetime | None = None) -> int:
             logger.warning("Slack DM to %s failed: %s", recipient, exc)
             record_health("slack", False, str(exc), now)
             continue
-        _log_sent(findings, "NEW_DM", 0, recipient, ts, now)
+        for f in findings:
+            _log_sent([f], "NEW_DM", _new_cycle_stage(f), recipient, ts, now)
         record_health("slack", True, now=now)
         sent += 1
     return sent

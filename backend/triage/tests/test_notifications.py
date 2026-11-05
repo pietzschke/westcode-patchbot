@@ -41,6 +41,27 @@ def test_dms_are_not_resent(team):
     assert len(slack.messages) == 1
 
 
+
+def test_reopened_finding_is_dmed_again_once_per_new_cycle(team):
+    from datetime import timedelta
+
+    from triage.dismissal import dismiss, reopen
+
+    a, _ = team
+    f = make_finding(state="NEW", assignee=a, highest_severity="MEDIUM", discovered_at=MONDAY_9 - timedelta(hours=1))
+    slack = FakeSlack()
+    assert send_new_finding_dms(slack=slack, now=MONDAY_9) == 1
+
+    later = MONDAY_9 + timedelta(days=2)
+    dismiss(f, a, mode="SNOOZED", reason="Wartet auf Upstream-Release", snooze_days=14, source="WEB", slack=slack,
+            now=MONDAY_9 + timedelta(hours=1))
+    reopen(f, None, source="SYSTEM", note="Zurückstellung abgelaufen.", now=later)
+
+    assert send_new_finding_dms(slack=slack, now=later) == 1
+    assert send_new_finding_dms(slack=slack, now=later + timedelta(minutes=5)) == 0
+    assert [m[0] for m in slack.messages] == ["UA", "UA"]
+    assert NotificationLog.objects.filter(finding=f, kind="NEW_DM").count() == 2
+
 def test_filtered_and_in_progress_findings_are_not_sent(team):
     a, _ = team
     make_finding(state="FILTERED_IRRELEVANT", assignee=a)

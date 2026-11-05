@@ -144,3 +144,19 @@ class IntegrationHealth(models.Model):
     ok = models.BooleanField(default=True)
     last_error = models.TextField(blank=True, default="")
     checked_at = models.DateTimeField()
+
+
+class WebhookEvent(models.Model):
+    """Signature-verified webhook delivery, processed asynchronously by the worker."""
+
+    source = models.CharField(max_length=16)  # SLACK | GITHUB
+    delivery_id = models.CharField(max_length=128, unique=True, null=True, blank=True)
+    event_type = models.CharField(max_length=64, blank=True, default="")
+    payload = models.JSONField(default=dict)
+    received_at = models.DateTimeField()
+    status = models.CharField(max_length=16, default="PENDING")  # PENDING | PROCESSED | REJECTED | FAILED
+    error = models.TextField(blank=True, default="")
+    processed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["received_at", "id"]

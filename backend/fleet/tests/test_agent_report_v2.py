@@ -151,3 +151,69 @@ def test_vanished_containers_are_removed_others_kept(host):
     host.containers.filter(name="mdb-app").update(project=project)
     _post(REPORT)
     assert list(host.containers.values_list("name", "project_id")) == [("mdb-app", project.id)]
+
+
+def test_hostname_field_is_ignored_for_identity(host, caplog):
+    # Spec §7.2: the host is derived from the token; `hostname -f` on a VM may differ from the infra name.
+    with caplog.at_level("WARNING", logger="fleet.api"):
+        assert _post({**REPORT, "hostname": "ubuntu-4gb-fsn1-1"}).status_code == 200
+    host.refresh_from_db()
+    assert host.hostname == "mdb.westcode.de"
+    assert host.last_seen_at is not None
+    assert "ubuntu-4gb-fsn1-1" in caplog.text
+
+
+_PKG = REPORT["packages"][0]
+_CTR = REPORT["containers"][0]
+
+
+@pytest.mark.parametrize("payload", [
+    [REPORT],
+    {**REPORT, "packages": "openssl"},
+    {**REPORT, "packages": [{k: v for k, v in _PKG.items() if k != "name"}]},
+    {**REPORT, "packages": [{**_PKG, "name": "x" * 256}]},
+    {**REPORT, "packages": [{**_PKG, "installed_version": {"v": 1}}]},
+    {**REPORT, "packages": [{**_PKG, "is_security_update": "maybe"}]},
+    {**REPORT, "containers": {"c1": _CTR}},
+    {**REPORT, "containers": [{k: v for k, v in _CTR.items() if k != "container_id"}]},
+    {**REPORT, "containers": [{k: v for k, v in _CTR.items() if k != "name"}]},
+    {**REPORT, "containers": [{**_CTR, "image_tag": "x" * 513}]},
+    {**REPORT, "containers": [{**_CTR, "repo_digests": "ecr/x@sha256:d1"}]},
+    {**REPORT, "containers": [{**_CTR, "git_clean": "dirty"}]},
+    {**REPORT, "os_version": ["20.04"]},
+    {**REPORT, "reboot_required": "maybe"},
+    {**REPORT, "kernel_version": "k" * 129},
+])
+def test_malformed_report_is_rejected_with_400_and_changes_nothing(host, payload):
+    response = _post(payload)
+    assert response.status_code == 400
+    host.refresh_from_db()
+    assert host.last_seen_at is None
+    assert host.packages.count() == 0
+    assert host.containers.count() == 0
+
+
+def test_null_git_clean_and_missing_optional_fields_are_accepted(host):
+    minimal = {"packages": [{"name": "openssl", "installed_version": "1.0"}],
+               "containers": [{"container_id": "c1", "name": "app", "git_clean": None}]}
+    assert _post(minimal).status_code == 200
+    c = host.containers.get()
+    assert c.git_clean is None
+    assert c.image_tag == ""
+    assert host.packages.get().candidate_version == ""
+
+
+def test_report_triggers_live_verification_once(host):
+    # Spec §6.4: live verification runs after every agent report (grace_eval runs verify_findings).
+    from triage.models import Job
+
+    assert _post(REPORT).status_code == 200
+    assert _post(REPORT).status_code == 200
+    assert list(Job.objects.filter(status="QUEUED").values_list("kind", flat=True)) == ["grace_eval"]
+
+
+def test_rejected_report_does_not_trigger_verification(host):
+    from triage.models import Job
+
+    assert _post({**REPORT, "packages": "x"}).status_code == 400
+    assert not Job.objects.exists()

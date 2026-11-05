@@ -1,8 +1,10 @@
 from datetime import date
+import logging
+
 from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
-from rest_framework import status
+from rest_framework import serializers, status
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -10,6 +12,56 @@ from fleet.auth import HostTokenAuthentication
 from fleet.infra_sync import distro_eol_date, is_distro_eol
 from fleet.models import Host, HostContainer, HostPackage
 from inventory.matching import link_containers_to_repositories
+from triage.jobs import enqueue
+
+logger = logging.getLogger(__name__)
+
+
+def _text(max_length: int, **kwargs) -> serializers.CharField:
+    """Optional string field bounded by the model column (missing -> "")."""
+    kwargs.setdefault("required", False)
+    kwargs.setdefault("default", "")
+    return serializers.CharField(max_length=max_length, allow_blank=True, trim_whitespace=False, **kwargs)
+
+
+class _PackageSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=255)
+    installed_version = _text(128)
+    candidate_version = _text(128)
+    is_security_update = serializers.BooleanField(required=False, default=False)
+    source_pocket = _text(64)
+
+
+class _ContainerSerializer(serializers.Serializer):
+    container_id = serializers.CharField(max_length=128)
+    name = serializers.CharField(max_length=255)
+    image_tag = _text(512)
+    image_id = _text(255)
+    repo_digests = serializers.ListField(child=serializers.CharField(max_length=1024), required=False, default=list)
+    oci_title = _text(255)
+    oci_revision = _text(128)
+    oci_source = _text(512)
+    image_created_at = _text(64, allow_null=True)  # parsed leniently; invalid timestamps are stored as NULL
+    working_dir = _text(512)
+    compose_service = _text(255)
+    git_head_sha = _text(64)
+    git_clean = serializers.BooleanField(required=False, allow_null=True, default=None)
+    status = _text(64, default="running")
+
+
+class AgentReportSerializer(serializers.Serializer):
+    """Shape of the agent report; types and lengths match the fleet models so bad input is a 400, not a 500."""
+
+    hostname = _text(255, allow_null=True)  # informational only, never used for identity (spec §7.2)
+    agent_version = _text(32)
+    os_distro = _text(64)
+    os_version = _text(64)
+    kernel_version = _text(128)
+    reboot_required = serializers.BooleanField(required=False, default=False)
+    apt_lists_updated_at = _text(64, allow_null=True)
+    packages = _PackageSerializer(many=True, required=False, default=list)
+    containers = _ContainerSerializer(many=True, required=False, default=list)
+
 
 def _parse_timestamp(value: object):
     """Parse an ISO 8601 timestamp from the agent; invalid or missing values become None."""
@@ -28,23 +80,23 @@ def _get_authenticated_host(request: Request) -> Host | None:
 
 
 def _container_fields(c: dict, now) -> dict:
-    """Telemetry fields of one reported container (everything except the curated links)."""
+    """Telemetry fields of one validated container (everything except the curated links)."""
     return {
-        "container_id": str(c["container_id"]),
-        "name": str(c["name"]),
-        "image_tag": str(c.get("image_tag", "")),
-        "image_id": str(c.get("image_id", "")),
-        "repo_digests": list(c.get("repo_digests") or []),
-        "oci_title": str(c.get("oci_title", "")),
-        "oci_revision": str(c.get("oci_revision", "")),
-        "oci_source": str(c.get("oci_source", "") or "")[:512],
-        "image_created_at": _parse_timestamp(c.get("image_created_at")),
-        "git_head_sha": str(c.get("git_head_sha", "") or "")[:64],
+        "container_id": c["container_id"],
+        "name": c["name"],
+        "image_tag": c["image_tag"],
+        "image_id": c["image_id"],
+        "repo_digests": list(c["repo_digests"]),
+        "oci_title": c["oci_title"],
+        "oci_revision": c["oci_revision"],
+        "oci_source": c["oci_source"],
+        "image_created_at": _parse_timestamp(c["image_created_at"]),
+        "git_head_sha": c["git_head_sha"],
         "reported_at": now,
-        "working_dir": str(c.get("working_dir", "")),
-        "compose_service": str(c.get("compose_service", "")),
-        "git_clean": c.get("git_clean", None),
-        "status": str(c.get("status", "running")),
+        "working_dir": c["working_dir"],
+        "compose_service": c["compose_service"],
+        "git_clean": c["git_clean"],
+        "status": c["status"],
     }
 
 
@@ -102,25 +154,33 @@ class AgentReportView(APIView):
                 status=status.HTTP_401_UNAUTHORIZED,
             )
 
-        payload = request.data if isinstance(request.data, dict) else {}
-        reported_hostname = payload.get("hostname")
-        if reported_hostname != host.hostname:
-            return Response(
-                {"detail": "Payload hostname does not match authenticated host."},
-                status=status.HTTP_403_FORBIDDEN,
+        if not isinstance(request.data, dict):
+            return Response({"detail": "Report must be a JSON object."}, status=status.HTTP_400_BAD_REQUEST)
+        serializer = AgentReportSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        payload = serializer.validated_data
+
+        # Spec §7.2: the host comes from the token; the hostname field is informational only. `hostname -f`
+        # on a VM may legitimately differ from the westcode-infra name, so a mismatch is logged, not rejected.
+        reported_hostname = payload.get("hostname") or ""
+        if reported_hostname and reported_hostname != host.hostname:
+            logger.warning(
+                "Agent report for host %s carries hostname %r; ignored (identity comes from the token).",
+                host.hostname, reported_hostname[:255],
             )
 
-        os_distro = str(payload.get("os_distro", "") or "").strip()
-        os_version = str(payload.get("os_version", "") or "").strip()
-        reboot_required = bool(payload.get("reboot_required", False))
+        os_distro = payload["os_distro"].strip()
+        os_version = payload["os_version"].strip()
+        reboot_required = payload["reboot_required"]
         eol = (
             is_distro_eol(os_distro, os_version, today=date.today())
             if (os_distro and os_version)
             else False
         )
 
-        packages_data = payload.get("packages") or []
-        containers_data = payload.get("containers") or []
+        packages_data = payload["packages"]
+        containers_data = payload["containers"]
 
         now = timezone.now()
         with transaction.atomic():
@@ -128,9 +188,9 @@ class AgentReportView(APIView):
             host.os_version = os_version
             host.is_os_eol = eol
             host.os_eol_date = distro_eol_date(os_distro, os_version) if (os_distro and os_version) else None
-            host.kernel_version = str(payload.get("kernel_version", "") or "")[:128]
-            host.agent_version = str(payload.get("agent_version", "") or "")[:32]
-            host.apt_lists_updated_at = _parse_timestamp(payload.get("apt_lists_updated_at"))
+            host.kernel_version = payload["kernel_version"]
+            host.agent_version = payload["agent_version"]
+            host.apt_lists_updated_at = _parse_timestamp(payload["apt_lists_updated_at"])
             host.reboot_required = reboot_required
             host.last_seen_at = now
             host.save(
@@ -153,17 +213,21 @@ class AgentReportView(APIView):
                     [
                         HostPackage(
                             host=host,
-                            name=str(pkg["name"]),
-                            installed_version=str(pkg.get("installed_version", "")),
-                            candidate_version=str(pkg.get("candidate_version", "") or ""),
-                            is_security_update=bool(pkg.get("is_security_update", False)),
-                            source_pocket=str(pkg.get("source_pocket", "") or "")[:64],
+                            name=pkg["name"],
+                            installed_version=pkg["installed_version"],
+                            candidate_version=pkg["candidate_version"],
+                            is_security_update=pkg["is_security_update"],
+                            source_pocket=pkg["source_pocket"],
                         )
                         for pkg in packages_data
                     ]
                 )
 
             _sync_containers(host, containers_data, now)
+
+        # Spec §6.4: live verification runs after every agent report. grace_eval runs verify_findings in the
+        # worker; unique=True collapses the reports of all hosts into one pending run.
+        enqueue("grace_eval", unique=True)
 
         return Response(
             {

@@ -26,7 +26,9 @@ def hosts(db):
 
 
 @pytest.mark.django_db
-def test_agent_report_rejects_cross_host_spoofing(hosts):
+def test_agent_report_cannot_spoof_another_host_via_hostname(hosts):
+    # Identity comes from the token only (spec §7.2): a foreign hostname in the payload is ignored and the
+    # report lands on the token's own host, never on the named one.
     h1, t1, h2, _ = hosts
     client = APIClient()
     client.credentials(HTTP_AUTHORIZATION=f"Bearer {t1}")
@@ -36,7 +38,11 @@ def test_agent_report_rejects_cross_host_spoofing(hosts):
         data={"hostname": "masteroil.westcode.de", "os_distro": "ubuntu", "os_version": "24.04", "packages": [], "containers": []},
         format="json",
     )
-    assert resp.status_code == 403
+    assert resp.status_code == 200
+    h1.refresh_from_db()
+    h2.refresh_from_db()
+    assert h1.last_seen_at is not None and h1.os_version == "24.04"
+    assert h2.last_seen_at is None and h2.os_version != "24.04"
 
 
 @pytest.mark.django_db

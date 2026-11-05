@@ -78,6 +78,13 @@ sudo install -o 1000 -g 1000 -m 0400 <download>.pem deploy/secrets/github-app.pe
 # Images bauen (werden nie aus einer Registry gezogen)
 docker compose -f deploy/compose.yaml build
 
+# Frontend bauen: statische Dateien, die der Reverse Proxy (Abschnitt 4) direkt aus
+# /opt/patchbot/frontend/dist/frontend/browser ausliefert. Node läuft nur im Wegwerf-Container.
+# (Im Repository liegt keine package-lock.json, daher `npm install` statt `npm ci`.)
+docker run --rm -v /opt/patchbot/frontend:/app -w /app node:22-alpine \
+  sh -c 'npm install --no-audit --no-fund && npx ng build'
+ls /opt/patchbot/frontend/dist/frontend/browser/index.html
+
 # Nur für Claude-Code-Patching (Abschnitt 14):
 docker build -t patchbot-sandbox:node22    -f deploy/sandbox/Dockerfile.node22    deploy/sandbox
 docker build -t patchbot-sandbox:python312 -f deploy/sandbox/Dockerfile.python312 deploy/sandbox
@@ -136,9 +143,13 @@ Ins Internet dürfen **nur** diese zwei Routen, jeweils nur `POST`, mit 1 MB Bod
 - `POST /api/webhooks/slack/interactions/`
 - `POST /api/webhooks/github/`
 
-Alles andere (Frontend, `/api/…`, Entra-Login, `/api/agent/report/`) ist nur aus internen Netzen erreichbar:
-Büro/VPN für Menschen, die Egress-IPs der 23 VMs für den Agent-Endpunkt. Der Entra-Callback braucht keine
-öffentliche Erreichbarkeit – er wird vom Browser des Nutzers aufgerufen.
+Alles andere ist nur aus internen Netzen erreichbar, mit **zwei getrennten Allowlists**:
+
+- **Büro/VPN** (`patchbot-internal.conf` bzw. `@internal`): Frontend, `/api/…`, Entra-Login. Keine VM-IPs.
+- **Egress-IPs der 23 VMs** (`patchbot-agents.conf` bzw. `@agent`): ausschließlich
+  `POST /api/agent/report/`. Eine VM erreicht damit weder das UI noch andere API-Pfade.
+
+Der Entra-Callback braucht keine öffentliche Erreichbarkeit – er wird vom Browser des Nutzers aufgerufen.
 
 ### nginx (Beispiel)
 
@@ -178,7 +189,16 @@ server {
         proxy_pass http://patchbot_web;
     }
 
-    # --- intern: alles andere ---
+    # --- Agent-VMs: genau ein Pfad, nur POST, eigene Allowlist ---
+    location = /api/agent/report/ {
+        include /etc/nginx/snippets/patchbot-agents.conf;
+        limit_except POST { deny all; }
+        include /etc/nginx/snippets/patchbot-proxy.conf;
+        proxy_set_header Cookie "";          # Agent authentifiziert sich nur per Bearer-Token
+        proxy_pass http://patchbot_web;
+    }
+
+    # --- intern (Büro/VPN): UI und restliche API ---
     location /api/ {
         include /etc/nginx/snippets/patchbot-internal.conf;
         include /etc/nginx/snippets/patchbot-proxy.conf;
@@ -186,7 +206,7 @@ server {
     }
     location / {
         include /etc/nginx/snippets/patchbot-internal.conf;
-        root /opt/patchbot/frontend/dist/frontend/browser;   # npx ng build
+        root /opt/patchbot/frontend/dist/frontend/browser;   # Build: Abschnitt 2
         try_files $uri /index.html;
     }
 }
@@ -200,9 +220,14 @@ proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
 ```
 
 ```nginx
-# /etc/nginx/snippets/patchbot-internal.conf
+# /etc/nginx/snippets/patchbot-internal.conf  (UI + API: nur Menschen)
 allow 10.0.0.0/8;         # Büro/VPN – anpassen
-# allow 203.0.113.10;     # Egress-IP jeder Agent-VM (für /api/agent/report/)
+deny all;
+```
+
+```nginx
+# /etc/nginx/snippets/patchbot-agents.conf  (nur POST /api/agent/report/)
+allow 203.0.113.10;       # Egress-IP je Agent-VM – eine Zeile pro VM
 deny all;
 ```
 
@@ -235,13 +260,24 @@ patch.westcode.de {
         reverse_proxy 127.0.0.1:8020
     }
 
-    @internal remote_ip 10.0.0.0/8   # Büro/VPN + Egress-IPs der Agent-VMs
+    # Agent-VMs: nur dieser eine Pfad, nur POST
+    @agent {
+        method POST
+        path /api/agent/report/
+        remote_ip 203.0.113.10   # Egress-IPs der Agent-VMs (leerzeichengetrennt)
+    }
+    handle @agent {
+        request_header -Cookie
+        reverse_proxy 127.0.0.1:8020
+    }
+
+    @internal remote_ip 10.0.0.0/8   # nur Büro/VPN – keine VM-IPs
     handle @internal {
         handle /api/* {
             reverse_proxy 127.0.0.1:8020
         }
         handle {
-            root * /opt/patchbot/frontend/dist/frontend/browser
+            root * /opt/patchbot/frontend/dist/frontend/browser   # Build: Abschnitt 2
             try_files {path} /index.html
             file_server
         }
@@ -262,6 +298,15 @@ curl -s -o /dev/null -w '%{http_code}\n' https://patch.westcode.de/api/health/  
 curl -s -o /dev/null -w '%{http_code}\n' -X POST https://patch.westcode.de/api/agent/report/      # 403/404
 head -c 2000000 /dev/zero | curl -s -o /dev/null -w '%{http_code}\n' -X POST --data-binary @- \
   https://patch.westcode.de/api/webhooks/github/                                                  # 413
+```
+
+Prüfung von einer Agent-VM aus (deren Egress-IP auf der Agent-Allowlist steht):
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' -X POST https://patch.westcode.de/api/agent/report/      # 401 (Token fehlt)
+curl -s -o /dev/null -w '%{http_code}\n' https://patch.westcode.de/api/agent/report/              # 403/404 (kein POST)
+curl -s -o /dev/null -w '%{http_code}\n' https://patch.westcode.de/api/hosts/                     # 403/404
+curl -s -o /dev/null -w '%{http_code}\n' https://patch.westcode.de/                               # 403/404
 ```
 
 ## 5. Slack-App
@@ -426,6 +471,9 @@ git fetch && git checkout <v2-release>
 # 3. Bauen und starten; --remove-orphans entfernt die alten Container db, backend, trivy
 $C build
 $C up -d --remove-orphans
+# Frontend neu bauen (der Reverse Proxy liefert dist/frontend/browser aus, siehe Abschnitt 2)
+docker run --rm -v /opt/patchbot/frontend:/app -w /app node:22-alpine \
+  sh -c 'npm install --no-audit --no-fund && npx ng build'
 docker volume rm patchbot_trivy-cache        # Cache des alten Trivy-Servers
 
 # 4. Kontrolle
@@ -465,14 +513,15 @@ Danach:
    `POST /api/hosts/<slug>/token/`). Die Antwort enthält das Token einmalig und den fertigen
    `install-agent.sh`-Aufruf für Abschnitt 11.
 
-Rollback des Servers: auf den vorherigen v2-Stand zurück (`git checkout <vorheriger-tag>`, `build`, `up -d`),
+Rollback des Servers: auf den vorherigen v2-Stand zurück (`git checkout <vorheriger-tag>`, `build`, `up -d`,
+Frontend-Build),
 bei Schema-Problemen das Backup mit `pg_restore --clean` einspielen. **v1 ist kein Rollback-Ziel**: der
 v1-Server würde den Job-Kanal zu den Agents wieder öffnen.
 
 ## 11. Flotten-Rollout und Rollback
 
-Voraussetzungen: v2-Server läuft, Agent-Endpunkt `/api/agent/report/` ist von den VMs erreichbar (Allowlist
-im Reverse Proxy), pro Host existiert ein Token, die Staging-Validierung (Abschnitt 12) ist bestanden.
+Voraussetzungen: v2-Server läuft, Agent-Endpunkt `/api/agent/report/` ist von den VMs erreichbar (Agent-Allowlist
+`patchbot-agents.conf` bzw. `@agent` im Reverse Proxy), pro Host existiert ein Token, die Staging-Validierung (Abschnitt 12) ist bestanden.
 
 ### Sofortmaßnahme gegen v1-Agents
 
@@ -649,7 +698,7 @@ run_worker --once` (braucht GitHub-App-Konfiguration).
 ## 16. Offene Punkte
 
 - **Hosting des Patchbot-Servers** (EC2 oder extern) entscheidet über die ECR-Anbindung (Abschnitt 7).
-- **Reverse Proxy:** nginx oder Caddy; Allowlist mit den Egress-IPs der 23 VMs und dem Büro/VPN pflegen.
+- **Reverse Proxy:** nginx oder Caddy; zwei Allowlists pflegen – Egress-IPs der 23 VMs (nur Agent-Endpunkt) und Büro/VPN (UI/API).
 - **Trivy-DB-Aktualisierung:** `research.trivy.update_trivy_db()` wird vom Scheduler noch nicht aufgerufen;
   bis dahin übernimmt der Dienst `trivy-db` die Aktualisierung (alle 6 h).
 - **Renovate:** bleibt als selbst gehosteter Runner im Stack. Falls Renovate org-weit anders betrieben wird

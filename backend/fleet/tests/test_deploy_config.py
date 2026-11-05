@@ -178,6 +178,45 @@ def test_installer_enables_timer_not_service():
     assert "enable --now westcode-patchbot-agent.service" not in text
 
 
+def _fenced_blocks(text: str, lang: str) -> list[str]:
+    return re.findall(rf"```{lang}\n(.*?)```", text, flags=re.DOTALL)
+
+
+def test_runbook_proxy_separates_agent_allowlist_from_ui_and_api():
+    # Spec §3.3: UI/API only for office/VPN; the VMs may only reach POST /api/agent/report/.
+    text = (REPO_ROOT / "docs" / "runbooks" / "patchbot-v2-rollout.md").read_text(encoding="utf-8")
+    nginx = "\n".join(_fenced_blocks(text, "nginx"))
+    agent_location = re.search(r"location = /api/agent/report/ \{(.*?)\n    \}", nginx, flags=re.DOTALL)
+    assert agent_location, "nginx needs an exact location for the agent endpoint"
+    assert "patchbot-agents.conf" in agent_location.group(1)
+    assert "limit_except POST" in agent_location.group(1)
+    for location in ("location /api/ {", "location / {"):
+        block = nginx.split(location, 1)[1].split("}", 1)[0]
+        assert "patchbot-internal.conf" in block and "patchbot-agents.conf" not in block, location
+    internal = nginx.split("# /etc/nginx/snippets/patchbot-internal.conf", 1)[1].split("deny all;", 1)[0]
+    assert "Agent-VM" not in internal and "agent/report" not in internal
+
+    caddy = "\n".join(_fenced_blocks(text, "caddyfile"))
+    agent_matcher = re.search(r"@agent \{(.*?)\}", caddy, flags=re.DOTALL)
+    assert agent_matcher
+    assert "path /api/agent/report/" in agent_matcher.group(1)
+    assert "method POST" in agent_matcher.group(1)
+    assert "remote_ip" in agent_matcher.group(1)
+    internal_line = next(line for line in caddy.splitlines() if line.strip().startswith("@internal"))
+    assert "Agent" not in internal_line
+
+
+def test_runbook_builds_the_frontend_that_the_proxy_serves():
+    text = (REPO_ROOT / "docs" / "runbooks" / "patchbot-v2-rollout.md").read_text(encoding="utf-8")
+    angular = json.loads((REPO_ROOT / "frontend" / "angular.json").read_text(encoding="utf-8"))
+    project = next(iter(angular["projects"]))
+    output = angular["projects"][project]["architect"]["build"]["options"].get("outputPath", f"dist/{project}")
+    served = f"/opt/patchbot/frontend/{output}/browser"
+    assert text.count(served) >= 2  # nginx + Caddy
+    assert "ng build" in text.split("## 3.", 1)[0]  # server preparation (section 2)
+    assert "ng build" in text.split("## 10.", 1)[1].split("## 11.", 1)[0]  # update/migration (section 10)
+
+
 def test_requests_behind_the_tls_proxy_are_secure():
     from django.test import RequestFactory
 

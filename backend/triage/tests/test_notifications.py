@@ -159,3 +159,27 @@ def test_escalation_after_merge_has_no_ack_button(team):
     assert escalate_overdue(slack=slack, now=MONDAY_9) == 1
     assert "ack" not in _action_ids(slack.messages[0][2])
     assert "nach Merge noch nicht live" in _section_texts(slack.messages[0][2])
+
+
+def test_target_raised_dm_goes_once_to_in_progress_assignee_in_aggregated_dm(team):
+    a, _ = team
+    make_finding(state="NEW", assignee=a)
+    raised = make_finding(state="IN_PROGRESS", assignee=a, target_version="4.17.21")
+    slack = FakeSlack()
+    assert send_new_finding_dms(slack=slack, now=MONDAY_9, target_raised=[raised]) == 1
+    assert len(slack.messages) == 1  # one aggregated DM per person and run
+    channel, _, blocks = slack.messages[0]
+    assert channel == "UA"
+    assert "Zielversion angehoben" in _section_texts(blocks)
+    assert NotificationLog.objects.filter(finding=raised, kind="TARGET_RAISED").count() == 1
+
+    assert send_new_finding_dms(slack=slack, now=MONDAY_9, target_raised=[raised]) == 0
+    raised.target_version = "4.17.22"
+    raised.save()
+    assert send_new_finding_dms(slack=slack, now=MONDAY_9, target_raised=[raised]) == 1
+
+
+def test_target_raised_dm_skips_findings_that_are_no_longer_in_progress(team):
+    a, _ = team
+    f = make_finding(state="PR_MERGED_WAITING_LIVE", assignee=a)
+    assert send_new_finding_dms(slack=FakeSlack(), now=MONDAY_9, target_raised=[f]) == 0

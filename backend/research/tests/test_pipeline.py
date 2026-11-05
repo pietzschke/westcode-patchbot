@@ -169,3 +169,29 @@ def test_rescan_lifts_filter_when_cve_becomes_kev_listed():
     assert filtered.kev_listed is True
     assert filtered.state == "NEW"
     assert filtered.events.filter(from_state="FILTERED_IRRELEVANT", to_state="NEW").exists()
+
+
+@pytest.mark.django_db
+def test_raised_target_on_acknowledged_finding_retriages_supersedes_pr_and_notifies_once():
+    from triage.lifecycle import acknowledge
+
+    owner = make_member(email="owner@westcode.de", slack_user_id="UO")
+    dev = make_member(email="dev@westcode.de", slack_user_id="UD")
+    make_repo(full_name="westcoder/mdb", project=make_project(slug="wuerth", owner=owner))
+    gh = FakeGitHub(repos=[{"full_name": "westcoder/mdb", "default_branch": "main", "archived": False}])
+    slack = FakeSlack()
+    scan(github=gh, slack=slack)
+    f = Finding.objects.get()
+    acknowledge(f, dev, source="WEB", now=NOW)
+    first_pr = f.pr_number
+
+    newer = {**VULN, "id": "CVE-2026-0002", "fixed": "4.17.23"}
+    raised_trivy = Trivy(TrivyResult("OK", "", [VULN, newer]))
+    scan(github=gh, slack=slack, trivy=raised_trivy)
+    scan(github=gh, slack=slack, trivy=raised_trivy)
+
+    f.refresh_from_db()
+    assert (f.state, f.target_version, f.triage_status, f.assignee) == ("IN_PROGRESS", "4.17.23", "TRIAGED", dev)
+    assert f.pr_number != first_pr and f.pr_target_version == "4.17.23"
+    assert len(gh.created_pulls) == 2
+    assert [m[0] for m in slack.messages] == ["UO", "UD"]

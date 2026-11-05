@@ -89,7 +89,7 @@ def run_scan(
 
         sync_maintenance_updates(github=github)
         verify_findings(github=github, image_scan_lookup=lookup_image_scan, now=now)
-        send_new_finding_dms(slack=slack, now=now)
+        send_new_finding_dms(slack=slack, now=now, target_raised=result.target_raised)
     except Exception as exc:  # noqa: BLE001 - a crashed run must show up as FAILED, never as clean
         logger.exception("Scan run %s failed", run.id)
         return finalize_scan_run(run, now=timezone.now(), error=f"{type(exc).__name__}: {exc}")

@@ -47,7 +47,7 @@ def test_same_key_updates_single_finding_and_takes_highest_fix(repo):
 
 def test_raising_target_in_progress_keeps_deadline(repo):
     f = upsert_finding(cand(repo, Vuln("CVE-2026-0001", "HIGH", "4.17.19")), now=NOW).finding
-    f.state = "IN_PROGRESS"
+    f.state, f.triage_status = "IN_PROGRESS", "TRIAGED"
     f.save()
     deadline = f.deadline_at
     result = upsert_finding(cand(repo, Vuln("CVE-2026-0002", "HIGH", "4.17.21")), now=NOW)
@@ -55,6 +55,7 @@ def test_raising_target_in_progress_keeps_deadline(repo):
     assert result.target_version_raised is True
     assert f.deadline_at == deadline
     assert f.state == "IN_PROGRESS"
+    assert f.triage_status == "UNTRIAGED"  # the new target version needs a fresh assessment
 
 
 def test_dismissed_key_is_muted(repo):

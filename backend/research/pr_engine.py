@@ -74,13 +74,29 @@ def render_pr_body(finding: Finding) -> str:
     return f"<!-- patchbot:finding:{finding.id} -->\n" + render_triage_comment(finding)
 
 
-def _record_pr(finding: Finding, *, number: int, url: str, source: str, draft: bool, note: str) -> None:
+def _record_pr(finding: Finding, *, number: int, url: str, source: str, draft: bool, note: str,
+               target_version: str | None = None) -> None:
     finding.pr_number = number
     finding.pr_url = url
     finding.pr_source = source
     finding.pr_is_draft = draft
+    finding.pr_target_version = finding.target_version if target_version is None else target_version
     finding.save()
     log_event(finding, source="SYSTEM", from_state=finding.state, to_state=finding.state, note=note, at=timezone.now())
+
+
+def _detach_pr(finding: Finding, note: str) -> None:
+    finding.pr_number, finding.pr_url, finding.pr_source, finding.pr_is_draft = None, "", "", False
+    finding.pr_target_version = ""
+    finding.save()
+    log_event(finding, source="SYSTEM", from_state=finding.state, to_state=finding.state, at=timezone.now(), note=note)
+
+
+def _bumps_too_low(finding: Finding) -> bool:
+    """The linked PR targets a lower version than the cluster needs now (spec §5.3: target_version raised)."""
+    return bool(finding.pr_target_version) and (
+        compare_versions(finding.ecosystem, finding.pr_target_version, finding.target_version) < 0
+    )
 
 
 def _existing_pr(finding: Finding, github) -> PrOutcome | None:
@@ -88,17 +104,20 @@ def _existing_pr(finding: Finding, github) -> PrOutcome | None:
         return None
     details = github.get_pull(finding.repository.full_name, finding.pr_number)
     if details.get("state") == "open":
+        if _bumps_too_low(finding):
+            _detach_pr(finding, (
+                f"PR #{finding.pr_number} hebt {finding.package_name} nur auf {finding.pr_target_version}; "
+                f"die Zielversion ist jetzt {finding.target_version}. Ein passender PR wird gesucht bzw. erstellt"
+                + (" – der alte Patchbot-PR kann geschlossen werden." if finding.pr_source != "BOT" else ".")
+            ))
+            return None
         if finding.pr_source == "BOT":
             github.upsert_marker_comment(finding.repository.full_name, finding.pr_number, TRIAGE_MARKER,
                                          render_triage_comment(finding))
         return PrOutcome("EXISTING", finding.pr_number)
     if details.get("merged"):
         return PrOutcome("EXISTING", finding.pr_number, "merged")  # handled by webhook / reconciliation
-    old = finding.pr_number
-    finding.pr_number, finding.pr_url, finding.pr_source, finding.pr_is_draft = None, "", "", False
-    finding.save()
-    log_event(finding, source="SYSTEM", from_state=finding.state, to_state=finding.state, at=timezone.now(),
-              note=f"PR #{old} wurde ohne Merge geschlossen.")
+    _detach_pr(finding, f"PR #{finding.pr_number} wurde ohne Merge geschlossen.")
     return None
 
 
@@ -112,7 +131,8 @@ def _reuse_bot_pr(finding: Finding, github, *, bumper=None, worktrees=None, patc
             continue
         github.upsert_marker_comment(repo, bot.number, TRIAGE_MARKER, render_triage_comment(finding))
         _record_pr(finding, number=bot.number, url=bot.html_url, source="BOT", draft=bot.draft,
-                   note=f"Bestehenden Bot-PR #{bot.number} übernommen und Triage kommentiert.")
+                   note=f"Bestehenden Bot-PR #{bot.number} übernommen und Triage kommentiert.",
+                   target_version=bot.version)
         if finding.complexity == "COMPLEX" and patcher is not None and bot.head_ref:
             # Never push to the bot branch: code changes go into a companion Draft-PR based on it.
             outcome, pr = _ai_patch(finding, github, bumper, worktrees, patcher, base=bot.head_ref, bump=False)

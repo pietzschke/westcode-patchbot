@@ -1,6 +1,7 @@
 """Slack notifications (spec v2.1 §6.6): aggregated DMs and idempotent escalations.
 
-- one DM per assignee per run, listing every new finding with an „Ich bin dran“ button;
+- one DM per assignee per run, listing every new finding with an „Ich bin dran“ button (plus a one-time
+  notice for IN_PROGRESS findings whose target version was raised);
 - unassigned findings go to the team channel;
 - each escalation stage is posted exactly once, only on working days 08:00–18:00
   (KEV-listed CRITICAL findings immediately);
@@ -11,8 +12,10 @@
 from __future__ import annotations
 
 import logging
+import zlib
 from collections import defaultdict
 from datetime import datetime
+from typing import Iterable
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
@@ -77,7 +80,18 @@ def _new_cycle_stage(finding: Finding) -> int:
     return int(finding.discovered_at.timestamp())
 
 
-def send_new_finding_dms(*, slack, now: datetime | None = None) -> int:
+def _target_stage(finding: Finding) -> int:
+    """TARGET_RAISED dedup key: one notice per (finding, target_version)."""
+    return zlib.crc32(finding.target_version.encode()) & 0x7FFFFFFF
+
+
+def _recipient(f: Finding) -> str:
+    return f.assignee.slack_user_id if f.assignee and f.assignee.slack_user_id else settings.SLACK_TEAM_CHANNEL_ID
+
+
+def send_new_finding_dms(*, slack, now: datetime | None = None, target_raised: Iterable[Finding] = ()) -> int:
+    """One aggregated message per recipient: new findings plus IN_PROGRESS findings whose target version
+    was raised by this scan (spec §5.3: the assignee is notified once, timers are not reset)."""
     now = now or timezone.now()
     already = set(NotificationLog.objects.filter(kind="NEW_DM").values_list("finding_id", "stage"))
     pending = [
@@ -85,22 +99,37 @@ def send_new_finding_dms(*, slack, now: datetime | None = None) -> int:
         for f in Finding.objects.filter(state="NEW").select_related("project", "assignee")
         if (f.id, _new_cycle_stage(f)) not in already
     ]
+    raised_logged = set(NotificationLog.objects.filter(kind="TARGET_RAISED").values_list("finding_id", "stage"))
+    raised_pending = list({
+        f.id: f for f in target_raised if f.state == "IN_PROGRESS" and (f.id, _target_stage(f)) not in raised_logged
+    }.values())
     groups: dict[str, list[Finding]] = defaultdict(list)
+    raised_groups: dict[str, list[Finding]] = defaultdict(list)
     for f in pending:
-        recipient = f.assignee.slack_user_id if f.assignee and f.assignee.slack_user_id else settings.SLACK_TEAM_CHANNEL_ID
-        groups[recipient].append(f)
+        groups[_recipient(f)].append(f)
+    for f in raised_pending:
+        raised_groups[_recipient(f)].append(f)
 
     sent = 0
-    for recipient, findings in groups.items():
+    for recipient in list(dict.fromkeys([*groups, *raised_groups])):
+        findings, raised = groups.get(recipient, []), raised_groups.get(recipient, [])
         to_team = recipient == settings.SLACK_TEAM_CHANNEL_ID
-        if to_team:
+        parts = []
+        if findings and to_team:
             reasons = "; ".join(sorted({f.assigned_reason_de for f in findings if f.assigned_reason_de}))
-            text = f"⚠️ {len(findings)} neue Sicherheits-Aufgabe(n) ohne zuständige Person" + (f" ({reasons})" if reasons else "")
-        else:
-            text = f"🔐 {len(findings)} neue Sicherheits-Aufgabe(n) für dich"
+            parts.append(f"⚠️ {len(findings)} neue Sicherheits-Aufgabe(n) ohne zuständige Person"
+                         + (f" ({reasons})" if reasons else ""))
+        elif findings:
+            parts.append(f"🔐 {len(findings)} neue Sicherheits-Aufgabe(n) für dich")
+        if raised:
+            parts.append(f"⬆️ Zielversion bei {len(raised)} Aufgabe(n) in Bearbeitung angehoben")
+        text = " · ".join(parts)
         blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": f"*{text}*"}}]
         for f in findings:
             blocks += _finding_blocks(f)
+        for f in raised:
+            blocks += _finding_blocks(f, f"⬆️ Zielversion angehoben – bitte Fix auf {f.target_version} anpassen: "
+                                         f"{_finding_line(f)}")
         try:
             ts = slack.post_message(recipient, text, blocks)
         except SlackError as exc:
@@ -109,6 +138,8 @@ def send_new_finding_dms(*, slack, now: datetime | None = None) -> int:
             continue
         for f in findings:
             _log_sent([f], "NEW_DM", _new_cycle_stage(f), recipient, ts, now)
+        for f in raised:
+            _log_sent([f], "TARGET_RAISED", _target_stage(f), recipient, ts, now)
         record_health("slack", True, now=now)
         sent += 1
     return sent

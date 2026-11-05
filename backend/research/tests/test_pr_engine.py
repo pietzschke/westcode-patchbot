@@ -141,6 +141,33 @@ def test_existing_open_patchbot_pr_is_not_duplicated():
 
 
 @pytest.mark.django_db
+def test_open_patchbot_pr_for_lower_target_is_superseded():
+    gh = FakeGitHub(pull_details={(REPO, 77): {"state": "open", "merged": False}})
+    f = finding(pr_number=77, pr_source="PATCHBOT", pr_target_version="4.17.19", target_version="4.17.21")
+    outcome = ensure_pr(f, github=gh, bumper=FakeBumper(), worktrees=FakeWorktrees())
+    assert outcome.action == "PR_CREATED"
+    assert (f.pr_number, f.pr_target_version) == (gh.created_pulls[0]["number"], "4.17.21")
+    assert gh.created_pulls[0]["head"] == "patchbot/lodash-4.17.21"
+    assert f.events.filter(note__contains="#77").exists()
+
+
+@pytest.mark.django_db
+def test_open_pr_bumping_far_enough_is_kept():
+    gh = FakeGitHub(pull_details={(REPO, 77): {"state": "open", "merged": False}})
+    f = finding(pr_number=77, pr_source="PATCHBOT", pr_target_version="4.17.21", target_version="4.17.21")
+    assert ensure_pr(f, github=gh, bumper=FakeBumper(), worktrees=FakeWorktrees()).action == "EXISTING"
+    assert gh.created_pulls == []
+
+
+@pytest.mark.django_db
+def test_recorded_prs_remember_their_target_version():
+    gh = FakeGitHub(pulls={REPO: [bot_pull(41, "Update dependency lodash to v4.17.22")]})
+    f = finding()
+    ensure_pr(f, github=gh, bumper=FakeBumper(), worktrees=FakeWorktrees())
+    assert (f.pr_number, f.pr_target_version) == (41, "4.17.22")
+
+
+@pytest.mark.django_db
 def test_closed_unmerged_pr_is_replaced():
     gh = FakeGitHub(pull_details={(REPO, 77): {"state": "closed", "merged": False}})
     f = finding(pr_number=77, pr_source="PATCHBOT")

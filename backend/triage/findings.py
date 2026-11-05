@@ -94,6 +94,7 @@ def return_to_work(finding: Finding, *, now: datetime, note: str) -> None:
     finding.merge_commit_sha = ""
     finding.pr_merged_at = None
     finding.pr_number, finding.pr_url, finding.pr_source, finding.pr_is_draft = None, "", "", False
+    finding.pr_target_version = ""
     finding.ci_status = ""
     finding.verification_snapshot = []
     finding.verification_checked_at = None
@@ -133,6 +134,9 @@ def upsert_finding(candidate: Candidate, *, now: datetime | None = None) -> Upse
     if open_finding is not None:
         raised = _merge_into(open_finding, candidate, cve_ids, severity, target)
         if raised:
+            # Spec §5.3: timers stay; the new target needs a fresh triage (and possibly a new PR).
+            open_finding.triage_status = "UNTRIAGED"
+            open_finding.save(update_fields=["triage_status", "updated_at"])
             log_event(open_finding, source="SYSTEM", from_state=open_finding.state, to_state=open_finding.state,
                       note=f"Zielversion auf {open_finding.target_version} angehoben (neue CVE).", at=now)
             if open_finding.state == "PR_MERGED_WAITING_LIVE":

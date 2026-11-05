@@ -35,6 +35,7 @@ class CollectResult:
     updated: int = 0
     muted: int = 0
     findings: list[Finding] = field(default_factory=list)
+    target_raised: list[Finding] = field(default_factory=list)  # open findings whose target_version rose
     checkouts: dict = field(default_factory=dict)  # repo full_name -> CheckoutInfo (kept for triage evidence)
 
 
@@ -52,6 +53,8 @@ def _record_upsert(result: CollectResult, candidate: Candidate, now: datetime) -
         result.updated += 1
     if not outcome.muted:
         result.findings.append(outcome.finding)
+    if outcome.target_version_raised:
+        result.target_raised.append(outcome.finding)
     return outcome
 
 

@@ -74,7 +74,7 @@ The v1 prototype focused on automated host rollouts and raw scanner output. In p
 - **Backend:** Python 3.12+, Django 5.2, Django REST Framework (`backend/`), PostgreSQL in production (SQLite for local dev/tests).
 - **Frontend:** Angular 22 standalone components with Signals, Westcode branding (`frontend/`).
 - **Host agent:** Python 3.8+ stdlib-only script (`agent/patchbot_agent.py`), systemd **oneshot** service triggered by a timer (every 15 min).
-- **AI engine:** Anthropic Python SDK, default model `claude-sonnet-5-5`, configurable via `PATCHBOT_CLAUDE_MODEL`. Structured JSON output validated against a schema; prompt version stored per analysis.
+- **AI engine:** Anthropic Python SDK, default model `claude-sonnet-5-5`, configurable via `PATCHBOT_CLAUDE_MODEL`. Structured outputs (`output_config.format` with a JSON schema; forced `tool_choice` is rejected by current models), additionally validated by Patchbot; static system prompt with prompt caching; prompt version stored per analysis. Refusals (CVE analysis can trip safety classifiers) use the server-side fallback (`fallbacks: "default"`); a refusal of the whole chain leaves the finding `UNTRIAGED`.
 - **Scanner:** Trivy as the single vulnerability scanner (its DB aggregates GitHub Advisory, ecosystem advisories and Ubuntu/Debian security data) — no separate OSV/GHSA/USN integrations.
 - **Exploit signals:** CISA KEV JSON feed (daily) and FIRST EPSS API (daily), cached locally.
 

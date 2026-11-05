@@ -48,3 +48,11 @@ class ExploitSignal(models.Model):
     kev_added_at = models.DateField(null=True, blank=True)
     epss = models.FloatField(null=True, blank=True)
     updated_at = models.DateTimeField(null=True, blank=True)
+
+
+class TriageAnalysisCache(models.Model):
+    """Claude triage results keyed by cluster, target version, commit, prompt version and model."""
+
+    cache_key = models.CharField(max_length=64, unique=True)
+    result_json = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)

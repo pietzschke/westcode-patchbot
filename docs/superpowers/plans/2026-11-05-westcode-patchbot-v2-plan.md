@@ -1670,7 +1670,7 @@ def test_host_layer_candidates():
 - Extend: `backend/testing/fakes.py` — `FakeLLM(tool_input)` (records kwargs in `calls`; returns a message whose `content` holds one `tool_use` block named `record_triage`)
 - Create: `backend/research/tests/test_policy_gate.py`, `backend/research/tests/test_triage_ai.py`, `backend/research/tests/test_evidence.py`
 
-**Implementation notes:** `client.messages.create(model=settings.PATCHBOT_CLAUDE_MODEL, max_tokens=2000, system=SYSTEM_PROMPT, tools=[TRIAGE_TOOL], tool_choice={"type": "tool", "name": "record_triage"}, messages=[{"role": "user", "content": ...}])`. Every piece of external text goes into its own `<untrusted_…>` block, and the system prompt states that those blocks are data, never instructions. Validate the tool input against the schema (enum values, `0 ≤ confidence ≤ 1`). On invalid output or an API error: `triage_status = UNTRIAGED`, `complexity = COMPLEX`. Cache key: `sha256(cluster_key | target_version | repo_commit_sha | prompt_version)`.
+**Implementation notes (as built):** forced `tool_choice` returns a 400 on `claude-sonnet-5-5`, so the request uses structured outputs: `client.beta.messages.create(model=..., max_tokens=16000, system=[{..., "cache_control": {"type": "ephemeral"}}], output_config={"format": {"type": "json_schema", "schema": TRIAGE_SCHEMA}}, betas=["server-side-fallback-2026-07-01"], fallbacks="default")`. External text goes into `<untrusted_…>` blocks. Patchbot re-validates the JSON (enums, `0 ≤ confidence ≤ 1`). API errors, `stop_reason` `refusal`/`max_tokens` or invalid output → `UNTRIAGED`/`COMPLEX` with an event note. Cache key: `sha256(cluster key | target version | CVE ids | commit | prompt version | model)`. Tests use `FakeLLM(output=...)`.
 
 **Tests:**
 

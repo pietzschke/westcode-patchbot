@@ -87,3 +87,32 @@ class FakeGitHub:
 
     def combined_ci_status(self, repo, ref):
         return self.ci_status.get((repo, ref), "none")
+
+
+class FakeLLM:
+    """Stands in for anthropic.Anthropic(); records every request's kwargs."""
+
+    def __init__(self, output=None, *, stop_reason="end_turn", refusal_category=None, raises=None):
+        import json as _json
+        from types import SimpleNamespace
+
+        self.calls: list[dict] = []
+        self._raises = raises
+        self._response = SimpleNamespace(
+            content=[
+                SimpleNamespace(type="thinking", thinking=""),
+                SimpleNamespace(type="text", text=_json.dumps(output or {})),
+            ],
+            stop_reason=stop_reason,
+            stop_details=SimpleNamespace(type="refusal", category=refusal_category, explanation="")
+            if stop_reason == "refusal"
+            else None,
+        )
+        self.messages = SimpleNamespace(create=self._create)
+        self.beta = SimpleNamespace(messages=SimpleNamespace(create=self._create))
+
+    def _create(self, **kwargs):
+        self.calls.append(kwargs)
+        if self._raises is not None:
+            raise self._raises
+        return self._response

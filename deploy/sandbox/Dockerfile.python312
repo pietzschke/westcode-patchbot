@@ -1,0 +1,30 @@
+# Code-patching sandbox for Python projects (spec §5.5), tag: patchbot-sandbox:python312
+#   docker build -t patchbot-sandbox:python312 -f deploy/sandbox/Dockerfile.python312 deploy/sandbox
+#
+# research.sandbox starts it with --read-only, --cap-drop=ALL, no-new-privileges, --user=1000:1000,
+# a tmpfs on /tmp and only the worktree mounted at /work. The image holds no credentials; the only
+# way out is the allow-listing egress proxy on the internal network patchbot-sandbox-egress.
+FROM python:3.12-slim-trixie
+
+# pytest backs the allow-listed command `python -m pytest -q`; nothing else is added.
+RUN python -m pip install --no-cache-dir --disable-pip-version-check "pytest==8.4.2" \
+    && groupadd --gid 1000 sandbox \
+    && useradd --uid 1000 --gid 1000 --home-dir /tmp --no-create-home --shell /usr/sbin/nologin sandbox
+
+# Root filesystem is read-only at runtime: everything writable lives under /tmp.
+ENV HOME=/tmp \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_INPUT=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_CACHE_DIR=/tmp/.pip \
+    HTTP_PROXY=http://egress-proxy:3128 \
+    HTTPS_PROXY=http://egress-proxy:3128 \
+    http_proxy=http://egress-proxy:3128 \
+    https_proxy=http://egress-proxy:3128 \
+    NO_PROXY=localhost,127.0.0.1 \
+    no_proxy=localhost,127.0.0.1
+
+WORKDIR /work
+USER 1000:1000
+CMD ["sleep", "infinity"]

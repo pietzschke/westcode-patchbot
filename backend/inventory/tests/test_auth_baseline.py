@@ -113,7 +113,7 @@ def test_production_requires_real_secret_key():
 
 def test_compose_healthcheck_uses_public_health_endpoint():
     compose = yaml.safe_load((REPO_ROOT / "deploy/compose.yaml").read_text())
-    healthcheck = " ".join(compose["services"]["backend"]["healthcheck"]["test"])
+    healthcheck = " ".join(compose["services"]["web"]["healthcheck"]["test"])
     assert "/api/health/" in healthcheck
 
 

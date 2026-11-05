@@ -1,0 +1,19 @@
+# Optional override: Claude code patching for COMPLEX findings (spec §5.5, Draft-PRs).
+#
+#   docker compose -f deploy/compose.yaml -f deploy/compose.ai-patching.yaml up -d
+#
+# WARNING: the worker gets the host Docker socket to start sandbox containers. Access to the Docker
+# socket is root-equivalent on the Patchbot server (any container with any host mount can be
+# started). Read "Worker-Docker-Socket" in docs/runbooks/patchbot-v2-rollout.md before enabling
+# this, and prefer rootless Docker or a dedicated sandbox host.
+#
+# Prerequisites: sandbox images patchbot-sandbox:node22 / patchbot-sandbox:python312 built
+# (deploy/sandbox/), DOCKER_GID in .env = group id of /var/run/docker.sock on the host.
+services:
+  worker:
+    environment:
+      PATCHBOT_AI_PATCHING: "true"
+    group_add:
+      - "${DOCKER_GID:?DOCKER_GID (Gruppen-ID von /var/run/docker.sock) fehlt in .env}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock

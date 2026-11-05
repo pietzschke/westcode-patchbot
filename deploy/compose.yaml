@@ -1,5 +1,12 @@
-# Westcode Patchbot auf patch.westcode.de (liegt auf dem Server unter /opt/patchbot).
-# Geheimnisse stehen in /opt/patchbot/.env (nicht im Repository).
+# Westcode Patchbot v2 auf patch.westcode.de.
+# Repository-Checkout auf dem Server: /opt/patchbot (diese Datei: /opt/patchbot/deploy/compose.yaml).
+# Geheimnisse: /opt/patchbot/deploy/.env und deploy/secrets/ (nicht im Repository, siehe .env.example).
+# Runbook: docs/runbooks/patchbot-v2-rollout.md
+#
+#   docker compose -f deploy/compose.yaml build
+#   docker compose -f deploy/compose.yaml up -d
+#
+# Claude-Code-Patching (Docker-Socket, root-äquivalent!) nur zusätzlich mit -f deploy/compose.ai-patching.yaml.
 name: patchbot
 
 x-hardened: &hardened
@@ -7,83 +14,178 @@ x-hardened: &hardened
     - ALL
   security_opt:
     - "no-new-privileges:true"
+  restart: unless-stopped
+
+# web, worker and trivy-db share one image (backend/Dockerfile). It is only ever built locally,
+# never pulled, so a public image with the same name can not be substituted.
+x-backend: &backend
+  image: patchbot-backend:latest
+  pull_policy: never
+  user: "1000:1000"
+  read_only: true
+
+x-django-env: &django-env
+  DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?DJANGO_SECRET_KEY fehlt in .env}
+  DJANGO_DEBUG: "false"
+  POSTGRES_DB: patchbot
+  POSTGRES_USER: patchbot
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD fehlt in .env}
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  PATCHBOT_BASE_URL: ${PATCHBOT_BASE_URL:?PATCHBOT_BASE_URL fehlt in .env}
+  PATCHBOT_HOLIDAY_SUBDIVISION: ${PATCHBOT_HOLIDAY_SUBDIVISION:-NW}
+  PATCHBOT_EXTRA_HOLIDAYS: ${PATCHBOT_EXTRA_HOLIDAYS:-}
+  # Slack Web API only (HTTP interactivity, no Socket Mode / app-level token).
+  SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+  SLACK_TEAM_CHANNEL_ID: ${SLACK_TEAM_CHANNEL_ID:-}
 
 services:
-  db:
+  postgres:
     <<: *hardened
     image: postgres:18-alpine
     user: postgres
-    restart: unless-stopped
     environment:
       POSTGRES_DB: patchbot
       POSTGRES_USER: patchbot
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD fehlt in .env}
     volumes:
       - pgdata:/var/lib/postgresql
+    networks:
+      - backend
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U patchbot -d patchbot"]
       interval: 5s
       timeout: 3s
       retries: 20
 
-  trivy:
-    <<: *hardened
-    image: aquasec/trivy:latest
-    restart: unless-stopped
-    command: ["server", "--listen", "0.0.0.0:4954"]
-    volumes:
-      - trivy-cache:/root/.cache/
-    healthcheck:
-      test: ["CMD", "trivy", "version"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  backend:
-    <<: *hardened
-    image: patchbot-backend
-    pull_policy: never
-    restart: unless-stopped
-    env_file: .env
+  # Django/DRF behind the host reverse proxy. Only 127.0.0.1 is bound; the proxy publishes the two
+  # webhook paths to the internet and everything else only internally (spec §3.3, D-1).
+  web:
+    <<: [*hardened, *backend]
+    build:
+      context: ../backend
+    command:
+      - sh
+      - -c
+      - >-
+        python manage.py migrate --noinput &&
+        exec gunicorn --bind 0.0.0.0:8000 --workers 3 --timeout 30
+        --forwarded-allow-ips '*' --access-logfile -
+        'django.core.wsgi:get_wsgi_application()'
+    tmpfs:
+      - /tmp
     environment:
-      DATABASE_URL: postgres://patchbot:${POSTGRES_PASSWORD}@db:5432/patchbot
-      POSTGRES_DB: ${POSTGRES_DB:-patchbot}
-      POSTGRES_USER: ${POSTGRES_USER:-patchbot}
-      POSTGRES_HOST: db
-      POSTGRES_PORT: "5432"
-      TRIVY_SERVER_URL: http://trivy:4954
+      <<: *django-env
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:?DJANGO_ALLOWED_HOSTS fehlt in .env}
+      DJANGO_CSRF_TRUSTED_ORIGINS: ${DJANGO_CSRF_TRUSTED_ORIGINS:?DJANGO_CSRF_TRUSTED_ORIGINS fehlt in .env}
+      MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID:?MICROSOFT_TENANT_ID fehlt in .env}
+      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:?MICROSOFT_CLIENT_ID fehlt in .env}
+      MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET:?MICROSOFT_CLIENT_SECRET fehlt in .env}
+      MICROSOFT_REDIRECT_URI: ${MICROSOFT_REDIRECT_URI:?MICROSOFT_REDIRECT_URI fehlt in .env}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:?SLACK_SIGNING_SECRET fehlt in .env}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:?GITHUB_WEBHOOK_SECRET fehlt in .env}
     ports:
       - "127.0.0.1:8020:8000"
+    networks:
+      - default
+      - backend
     depends_on:
-      db:
+      postgres:
         condition: service_healthy
-      trivy:
-        condition: service_started
     healthcheck:
+      # Host header = first DJANGO_ALLOWED_HOSTS entry, otherwise Django answers 400 (DisallowedHost).
       test:
-        [
-          "CMD",
-          "python",
-          "-c",
-          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health/', timeout=10)",
-        ]
+        - CMD
+        - python
+        - -c
+        - >-
+          import os, urllib.request as u;
+          h = os.environ['DJANGO_ALLOWED_HOSTS'].split(',')[0].strip();
+          u.urlopen(u.Request('http://127.0.0.1:8000/api/health/', headers={'Host': h}), timeout=10)
       interval: 60s
       timeout: 15s
-      start_period: 30s
+      start_period: 60s
       retries: 3
 
+  # Scheduler + job queue (scans, webhook events, PR preparation, Slack DMs). Runs the Trivy CLI,
+  # git and npm/uv itself. No Docker socket here: see compose.ai-patching.yaml.
+  worker:
+    <<: [*hardened, *backend]
+    command: ["python", "manage.py", "run_worker"]
+    tmpfs:
+      - /tmp:size=1g
+    environment:
+      <<: *django-env
+      GITHUB_APP_ID: ${GITHUB_APP_ID:?GITHUB_APP_ID fehlt in .env}
+      GITHUB_APP_INSTALLATION_ID: ${GITHUB_APP_INSTALLATION_ID:?GITHUB_APP_INSTALLATION_ID fehlt in .env}
+      GITHUB_APP_PRIVATE_KEY_PATH: /run/secrets/github_app_private_key
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      PATCHBOT_CLAUDE_MODEL: ${PATCHBOT_CLAUDE_MODEL:-claude-sonnet-5-5}
+      PATCHBOT_CLAUDE_EFFORT: ${PATCHBOT_CLAUDE_EFFORT:-}
+      PATCHBOT_CLAUDE_REFUSAL_FALLBACK: ${PATCHBOT_CLAUDE_REFUSAL_FALLBACK:-true}
+      NOTION_API_KEY: ${NOTION_API_KEY:-}
+      NOTION_PROJECTS_DATABASE_ID: ${NOTION_PROJECTS_DATABASE_ID:-41931ab45ea846acbfe46b3305898af2}
+      # Must equal the repo-cache device path (host path == container path), because sandbox
+      # containers are started via the host daemon and bind-mount worktrees by this path.
+      PATCHBOT_REPO_CACHE: /var/lib/patchbot/repo-cache
+      PATCHBOT_AI_PATCHING: "false"
+      # ECR pulls for `trivy image --image-src remote` use the AWS default credential chain
+      # (instance profile / role patchbot-ecr-read, see runbook).
+      AWS_REGION: ${AWS_REGION:-eu-central-1}
+      AWS_DEFAULT_REGION: ${AWS_REGION:-eu-central-1}
+    secrets:
+      - github_app_private_key
+    volumes:
+      - repo-cache:/var/lib/patchbot/repo-cache
+      - worker-cache:/home/patchbot/.cache
+    networks:
+      - default
+      - backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+
+  # Keeps the Trivy vulnerability DB fresh for the worker, whose scans run with --skip-db-update.
+  # Replaces the v1 Trivy server: v2 runs the Trivy CLI inside the worker.
+  trivy-db:
+    <<: [*hardened, *backend]
+    command:
+      - sh
+      - -c
+      - "trap exit TERM; while :; do trivy image --download-db-only --quiet || echo 'Trivy-DB-Update fehlgeschlagen' >&2; sleep 6h & wait $${!}; done"
+    tmpfs:
+      - /tmp
+    volumes:
+      - worker-cache:/home/patchbot/.cache
+
+  # Only exit of the code-patching sandbox: forwards HTTPS to package registries (squid.conf).
+  egress-proxy:
+    <<: *hardened
+    image: patchbot-egress-proxy:latest
+    pull_policy: never
+    build:
+      context: ./egress-proxy
+    read_only: true
+    tmpfs:
+      - /tmp
+    networks:
+      - default
+      - patchbot-sandbox-egress
+
+  # Self-hosted Renovate runner from v1, unchanged in behaviour. It gets its own env file so it no
+  # longer sees the Patchbot secrets in .env.
   renovate:
     <<: *hardened
     image: renovate/renovate:latest
-    restart: unless-stopped
-    env_file: .env
+    env_file: renovate.env
     environment:
       RENOVATE_CONFIG_FILE: /usr/src/app/renovate.json
       RENOVATE_PLATFORM: github
       AWS_REGION: eu-central-1
       AWS_DEFAULT_REGION: eu-central-1
       CODEARTIFACT_DOMAIN: westcode
-      CODEARTIFACT_AUTH_TOKEN: ${CODEARTIFACT_AUTH_TOKEN:-}
     volumes:
       - ./renovate.json:/usr/src/app/renovate.json:ro
     entrypoint:
@@ -93,6 +195,26 @@ services:
         "trap exit TERM; while :; do renovate; sleep 6h & wait $${!}; done",
       ]
 
+secrets:
+  github_app_private_key:
+    # Owned by uid 1000, mode 0400 (the worker runs as 1000:1000).
+    file: ./secrets/github-app.pem
+
+networks:
+  default: {}
+  backend:
+    internal: true
+  # Fixed name: research.sandbox starts containers with --network=patchbot-sandbox-egress.
+  patchbot-sandbox-egress:
+    name: patchbot-sandbox-egress
+    internal: true
+
 volumes:
   pgdata:
-  trivy-cache:
+  worker-cache:
+  repo-cache:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/lib/patchbot/repo-cache

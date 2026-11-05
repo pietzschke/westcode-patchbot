@@ -245,3 +245,10 @@ def test_installer_stops_v1_daemon_before_replacing_files_and_enabling_timer():
     assert stop < install_bin < install_unit < enable_timer
     # A bare `disable` without --now must not be the only shutdown path.
     assert "systemctl disable westcode-patchbot-agent.service" not in text
+
+
+def test_worker_waits_for_a_downloaded_trivy_db():
+    services = _compose()["services"]
+    check = services["trivy-db"]["healthcheck"]["test"]
+    assert check[-1] == "/home/patchbot/.cache/trivy/db/metadata.json"
+    assert services["worker"]["depends_on"]["trivy-db"] == {"condition": "service_healthy"}

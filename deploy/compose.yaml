@@ -146,6 +146,8 @@ services:
         condition: service_healthy
       web:
         condition: service_healthy
+      trivy-db:
+        condition: service_healthy
 
   # Keeps the Trivy vulnerability DB fresh for the worker, whose scans run with --skip-db-update.
   # Replaces the v1 Trivy server: v2 runs the Trivy CLI inside the worker.
@@ -159,6 +161,13 @@ services:
       - /tmp
     volumes:
       - worker-cache:/home/patchbot/.cache
+    # Healthy once a DB exists, so the worker does not start scanning before the first download.
+    healthcheck:
+      test: ["CMD", "test", "-f", "/home/patchbot/.cache/trivy/db/metadata.json"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10m
+      retries: 3
 
   # Only exit of the code-patching sandbox: forwards HTTPS to package registries (squid.conf).
   egress-proxy:

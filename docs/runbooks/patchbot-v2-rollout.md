@@ -437,10 +437,33 @@ $C logs --tail 50 worker trivy-db
 Danach:
 
 1. Reverse Proxy umstellen (Abschnitt 4) und die Prüfungen von außen durchführen.
-2. Team in Patchbot anlegen (mindestens ein Admin, genau ein Default-Infra-Owner), Entra-Login testen.
+2. **Ersten Admin per CLI anlegen (Bootstrap).** Der Entra-Login akzeptiert nur Personen, die bereits als
+   aktives Teammitglied existieren, und Teammitglieder kann im UI nur ein Admin anlegen. Auf einer frischen
+   Datenbank deshalb den ersten Admin (idempotent, nur `@westcode.de`) per Management-Command anlegen:
+
+   ```bash
+   $C exec web python manage.py create_team_admin \
+     --email vorname.nachname@westcode.de --name "Vorname Nachname" --default-infra-owner
+   ```
+
+   Danach mit diesem Konto den Entra-Login testen und die übrigen Teammitglieder im UI („Team“) anlegen –
+   mindestens ein Admin, genau ein Default-Infra-Owner (`--default-infra-owner` weglassen, falls dieser
+   jemand anderes sein soll; ein zweiter aktiver Default-Infra-Owner wird abgelehnt).
 3. Notion-Sync, Repository-Sync und einen ersten Scan („Scan & Sync starten“) auslösen. Bis die Trivy-DB
    geladen ist (`trivy-db`-Logs), enden Scans als FAILED (Ampel GRAU) – nie fälschlich grün.
-4. Hosts im UI anlegen und Agent-Tokens erzeugen (`/api/hosts/<slug>/token/`, Admin).
+4. **Hosts importieren.** Im UI lassen sich Hosts nicht anlegen; die Host-Liste kommt aus dem
+   `westcode-infra`-Checkout (`stacks/*/servers.tf`). Der Checkout muss für uid 1000 lesbar sein:
+
+   ```bash
+   sudo git clone https://github.com/<org>/westcode-infra.git /opt/westcode-infra   # bzw. git pull
+   $C run --rm --no-deps -v /opt/westcode-infra:/infra:ro web python manage.py sync_infra_hosts /infra
+   ```
+
+   Den Import nach Änderungen an `servers.tf` wiederholen. Er legt Hosts an bzw. aktualisiert Provider,
+   Stack und deklariertes Image; vom Agenten gemeldete OS-Daten überschreibt er nicht.
+5. **Agent-Tokens erzeugen** (Admin): im UI „Live-Hosts“ → Host → „Agent-Token generieren“ (bzw.
+   `POST /api/hosts/<slug>/token/`). Die Antwort enthält das Token einmalig und den fertigen
+   `install-agent.sh`-Aufruf für Abschnitt 11.
 
 Rollback des Servers: auf den vorherigen v2-Stand zurück (`git checkout <vorheriger-tag>`, `build`, `up -d`),
 bei Schema-Problemen das Backup mit `pg_restore --clean` einspielen. **v1 ist kein Rollback-Ziel**: der

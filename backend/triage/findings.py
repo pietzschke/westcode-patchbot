@@ -118,7 +118,7 @@ def return_to_work(finding: Finding, *, now: datetime, note: str) -> None:
     finding.merge_commit_sha = ""
     finding.pr_merged_at = None
     finding.pr_number, finding.pr_url, finding.pr_source, finding.pr_is_draft = None, "", "", False
-    finding.pr_target_version = ""
+    finding.pr_target_version = finding.pr_head_ref = ""
     finding.ci_status = ""
     finding.verification_snapshot = []
     finding.verification_checked_at = None

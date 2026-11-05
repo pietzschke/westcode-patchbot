@@ -217,9 +217,27 @@ def analyze(user_content: str, *, client) -> tuple[TriageResult | None, str]:
     return (result, "") if result else (None, "Claude-Antwort entsprach nicht dem Schema.")
 
 
+OS_EOL_RUNBOOK = """Migrationsplan für {host} ({os}) – Betriebssystem erreicht das Supportende (D-5):
+1. Neues Image vorbereiten: VM mit unterstütztem Release über westcode-infra (OpenTofu) aufsetzen.
+2. Agent, Docker und Anwendung(en) auf der neuen VM installieren und konfigurieren.
+3. Daten migrieren: Datenbanken, Volumes und Uploads übertragen, Konsistenz und Backups prüfen.
+4. DNS umschalten (TTL vorher senken) und die Anwendung auf der neuen VM abnehmen.
+5. Alte VM zurückbauen: Dienste stoppen, Backups sichern, VM löschen und aus OpenTofu entfernen.
+Das Finding wird geschlossen, sobald der Agent ein unterstütztes Release meldet."""
+
+
+def _os_eol_runbook(finding: Finding) -> str:
+    host = finding.host
+    name = host.hostname if host else finding.target_ref.removeprefix("host:")
+    os_label = f"{host.os_distro} {host.os_version}".strip() if host else finding.current_version
+    return OS_EOL_RUNBOOK.format(host=name, os=os_label or finding.current_version or "unbekannt")
+
+
 def _apply_deterministic(finding: Finding) -> None:
     if finding.layer == "INFRASTRUCTURE":
         finding.complexity = "COMPLEX" if finding.package_name == "__os_eol__" else "SIMPLE"
+        if finding.package_name == "__os_eol__" and not finding.manual_runbook:
+            finding.manual_runbook = _os_eol_runbook(finding)  # spec §5.5 case 4: no PR, a manual runbook
     else:  # CONTAINER_IMAGE: rebuild on an updated base image
         finding.complexity = "SIMPLE"
         finding.summary_de = finding.summary_de or "Basis-Image aktualisieren und Image neu bauen."

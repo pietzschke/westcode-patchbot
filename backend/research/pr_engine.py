@@ -21,6 +21,7 @@ from research.diff_gate import DiffRejected, check_diff
 from triage.findings import log_event
 from triage.models import Finding
 from triage.versions import compare_versions
+from triage.webhooks import refresh_ci_status
 
 TRIAGE_MARKER = "<!-- patchbot:triage -->"
 PR_LABELS = ["patchbot", "security"]
@@ -74,20 +75,23 @@ def render_pr_body(finding: Finding) -> str:
     return f"<!-- patchbot:finding:{finding.id} -->\n" + render_triage_comment(finding)
 
 
-def _record_pr(finding: Finding, *, number: int, url: str, source: str, draft: bool, note: str,
-               target_version: str | None = None) -> None:
+def _record_pr(finding: Finding, github, *, number: int, url: str, source: str, draft: bool, note: str,
+               head_ref: str, target_version: str | None = None) -> None:
     finding.pr_number = number
     finding.pr_url = url
     finding.pr_source = source
     finding.pr_is_draft = draft
+    finding.pr_head_ref = head_ref
     finding.pr_target_version = finding.target_version if target_version is None else target_version
+    finding.ci_status = ""
     finding.save()
     log_event(finding, source="SYSTEM", from_state=finding.state, to_state=finding.state, note=note, at=timezone.now())
+    refresh_ci_status(finding, github)
 
 
 def _detach_pr(finding: Finding, note: str) -> None:
     finding.pr_number, finding.pr_url, finding.pr_source, finding.pr_is_draft = None, "", "", False
-    finding.pr_target_version = ""
+    finding.pr_target_version = finding.pr_head_ref = finding.ci_status = ""
     finding.save()
     log_event(finding, source="SYSTEM", from_state=finding.state, to_state=finding.state, at=timezone.now(), note=note)
 
@@ -114,6 +118,7 @@ def _existing_pr(finding: Finding, github) -> PrOutcome | None:
         if finding.pr_source == "BOT":
             github.upsert_marker_comment(finding.repository.full_name, finding.pr_number, TRIAGE_MARKER,
                                          render_triage_comment(finding))
+        refresh_ci_status(finding, github)
         return PrOutcome("EXISTING", finding.pr_number)
     if details.get("merged"):
         return PrOutcome("EXISTING", finding.pr_number, "merged")  # handled by webhook / reconciliation
@@ -130,9 +135,9 @@ def _reuse_bot_pr(finding: Finding, github, *, bumper=None, worktrees=None, patc
         if compare_versions(finding.ecosystem, bot.version, finding.target_version) < 0:
             continue
         github.upsert_marker_comment(repo, bot.number, TRIAGE_MARKER, render_triage_comment(finding))
-        _record_pr(finding, number=bot.number, url=bot.html_url, source="BOT", draft=bot.draft,
+        _record_pr(finding, github, number=bot.number, url=bot.html_url, source="BOT", draft=bot.draft,
                    note=f"Bestehenden Bot-PR #{bot.number} übernommen und Triage kommentiert.",
-                   target_version=bot.version)
+                   head_ref=bot.head_ref, target_version=bot.version)
         if finding.complexity == "COMPLEX" and patcher is not None and bot.head_ref:
             # Never push to the bot branch: code changes go into a companion Draft-PR based on it.
             outcome, pr = _ai_patch(finding, github, bumper, worktrees, patcher, base=bot.head_ref, bump=False)
@@ -178,7 +183,7 @@ def _ai_patch(finding: Finding, github, bumper, worktrees, patcher, *, base: str
             draft=True,
             labels=PR_LABELS + [AI_LABEL],
         )
-        return PrOutcome("PR_CREATED", pr["number"]), pr
+        return PrOutcome("PR_CREATED", pr["number"]), {**pr, "head_ref": branch}
     finally:
         worktrees.release(path)
 
@@ -210,8 +215,8 @@ def _deterministic_pr(finding: Finding, github, bumper, worktrees) -> PrOutcome:
         )
     finally:
         worktrees.release(path)
-    _record_pr(finding, number=pr["number"], url=pr["html_url"], source="PATCHBOT", draft=False,
-               note=f"Fix-PR #{pr['number']} erstellt (deterministischer Bump).")
+    _record_pr(finding, github, number=pr["number"], url=pr["html_url"], source="PATCHBOT", draft=False,
+               note=f"Fix-PR #{pr['number']} erstellt (deterministischer Bump).", head_ref=branch)
     return PrOutcome("PR_CREATED", pr["number"])
 
 
@@ -230,6 +235,7 @@ def ensure_pr(finding: Finding, *, github, bumper, worktrees, patcher=None, now=
         return PrOutcome("SKIPPED", detail="complex fix needs the code-patching sandbox or a human")
     outcome, pr = _ai_patch(finding, github, bumper, worktrees, patcher, base=finding.repository.default_branch, bump=True)
     if pr is not None:
-        _record_pr(finding, number=pr["number"], url=pr["html_url"], source="PATCHBOT_AI", draft=True,
-                   note=f"Draft-PR #{pr['number']} mit KI-generierten Code-Anpassungen erstellt.")
+        _record_pr(finding, github, number=pr["number"], url=pr["html_url"], source="PATCHBOT_AI", draft=True,
+                   note=f"Draft-PR #{pr['number']} mit KI-generierten Code-Anpassungen erstellt.",
+                   head_ref=pr["head_ref"])
     return outcome

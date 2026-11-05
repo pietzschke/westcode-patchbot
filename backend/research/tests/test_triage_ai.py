@@ -125,3 +125,27 @@ def test_non_application_layers_skip_llm(layer, package, expected):
     apply_triage(f, client=llm, checkout=None)
     assert (f.complexity, f.triage_status) == (expected, "TRIAGED")
     assert llm.calls == []
+
+
+@pytest.mark.django_db
+def test_os_eol_finding_gets_migration_runbook():
+    from testing.factories import make_host
+
+    host = make_host(slug="mdb", os_distro="ubuntu", os_version="20.04")
+    f = make_finding(layer="INFRASTRUCTURE", host=host, ecosystem="host", package_name="__os_eol__",
+                     triage_status="UNTRIAGED")
+    apply_triage(f, client=None, checkout=None)
+    f.refresh_from_db()
+    assert f.complexity == "COMPLEX"
+    for step in ("image", "daten", "dns", "alte vm"):  # D-5: image, data migration, DNS cut-over, decommission
+        assert step in f.manual_runbook.lower()
+    assert "ubuntu 20.04" in f.manual_runbook
+
+
+@pytest.mark.django_db
+def test_apt_finding_has_no_runbook():
+    from testing.factories import make_host
+
+    f = make_finding(layer="INFRASTRUCTURE", host=make_host(slug="mdb"), ecosystem="deb", package_name="openssl")
+    apply_triage(f, client=None, checkout=None)
+    assert f.manual_runbook == ""

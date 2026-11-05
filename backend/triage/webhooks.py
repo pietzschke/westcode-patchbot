@@ -120,9 +120,25 @@ def _process_slack(event: WebhookEvent, now: datetime) -> None:
     _finish(event, "PROCESSED")
 
 
+def refresh_ci_status(finding: Finding, github) -> None:
+    """Mirror the combined check-run status of the finding's PR branch (shown in the detail panel)."""
+    if not finding.pr_number or not finding.pr_head_ref or finding.repository is None:
+        return
+    try:
+        status = github.combined_ci_status(finding.repository.full_name, finding.pr_head_ref)
+    except Exception as exc:  # noqa: BLE001 - CI status is informational; keep the last known value
+        logger.warning("CI status of %s@%s failed: %s", finding.repository.full_name, finding.pr_head_ref, exc)
+        return
+    if status != finding.ci_status:
+        finding.ci_status = status
+        finding.save(update_fields=["ci_status", "updated_at"])
+
+
 def _apply_pull_state(finding: Finding, github, now: datetime) -> bool:
     details = github.get_pull(finding.repository.full_name, finding.pr_number)
     if not details.get("merged"):
+        if details.get("state") == "open":
+            refresh_ci_status(finding, github)
         return False
     merged_at = parse_datetime(str(details.get("merged_at") or "")) or now
     mark_pr_merged(finding, merge_commit_sha=str(details.get("merge_commit_sha") or ""), merged_at=merged_at,

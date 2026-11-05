@@ -168,6 +168,33 @@ def test_recorded_prs_remember_their_target_version():
 
 
 @pytest.mark.django_db
+def test_new_pr_records_head_ref_and_ci_status():
+    gh = FakeGitHub(ci_status={(REPO, "patchbot/lodash-4.17.21"): "pending"})
+    f = finding()
+    ensure_pr(f, github=gh, bumper=FakeBumper(), worktrees=FakeWorktrees())
+    assert (f.pr_head_ref, f.ci_status) == ("patchbot/lodash-4.17.21", "pending")
+
+
+@pytest.mark.django_db
+def test_reused_bot_pr_records_head_ref_and_ci_status():
+    gh = FakeGitHub(pulls={REPO: [bot_pull(41, "Update dependency lodash to v4.17.21")]},
+                    ci_status={(REPO, "renovate/41"): "success"})
+    f = finding()
+    ensure_pr(f, github=gh, bumper=FakeBumper(), worktrees=FakeWorktrees())
+    assert (f.pr_head_ref, f.ci_status) == ("renovate/41", "success")
+
+
+@pytest.mark.django_db
+def test_existing_open_pr_refreshes_ci_status():
+    gh = FakeGitHub(pull_details={(REPO, 77): {"state": "open", "merged": False}},
+                    ci_status={(REPO, "patchbot/lodash-4.17.21"): "failure"})
+    f = finding(pr_number=77, pr_source="PATCHBOT", pr_head_ref="patchbot/lodash-4.17.21", ci_status="pending")
+    assert ensure_pr(f, github=gh, bumper=FakeBumper(), worktrees=FakeWorktrees()).action == "EXISTING"
+    f.refresh_from_db()
+    assert f.ci_status == "failure"
+
+
+@pytest.mark.django_db
 def test_closed_unmerged_pr_is_replaced():
     gh = FakeGitHub(pull_details={(REPO, 77): {"state": "closed", "merged": False}})
     f = finding(pr_number=77, pr_source="PATCHBOT")
@@ -230,6 +257,7 @@ def test_complex_fix_becomes_ai_labelled_draft_pr():
     assert pr["draft"] is True and "patchbot:ai-generated" in pr["labels"]
     assert (f.pr_source, f.pr_is_draft) == ("PATCHBOT_AI", True)
     assert gh.pushes == [(REPO, "patchbot/lodash-4.17.21")]
+    assert f.pr_head_ref == "patchbot/lodash-4.17.21"
 
 
 @pytest.mark.django_db

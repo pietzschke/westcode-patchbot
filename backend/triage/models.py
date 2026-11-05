@@ -59,6 +59,7 @@ class Finding(models.Model):
     pr_is_draft = models.BooleanField(default=False)
     pr_source = models.CharField(max_length=16, blank=True, default="")
     pr_target_version = models.CharField(max_length=128, blank=True, default="")  # version the linked PR bumps to
+    pr_head_ref = models.CharField(max_length=255, blank=True, default="")  # PR branch, for CI status lookups
     ci_status = models.CharField(max_length=16, blank=True, default="")
     merge_commit_sha = models.CharField(max_length=64, blank=True, default="")
     pr_merged_at = models.DateTimeField(null=True, blank=True)

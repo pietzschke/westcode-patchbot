@@ -172,3 +172,13 @@ def test_reconciliation_poll_catches_missed_merge():
     assert reconcile_open_prs(github=gh, now=NOW) == 1
     f.refresh_from_db()
     assert (f.state, f.merge_commit_sha) == ("PR_MERGED_WAITING_LIVE", "m1")
+
+
+@pytest.mark.django_db
+def test_reconciliation_refreshes_ci_status_of_open_prs():
+    f = make_finding(state="IN_PROGRESS", pr_number=41, pr_head_ref="patchbot/lodash-4.17.21",
+                     repository__full_name="westcoder/mdb")
+    gh = FakeGitHub(ci_status={("westcoder/mdb", "patchbot/lodash-4.17.21"): "failure"})
+    assert reconcile_open_prs(github=gh, now=NOW) == 0
+    f.refresh_from_db()
+    assert f.ci_status == "failure"

@@ -15,5 +15,5 @@ dependencies = [
 
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "config.settings_test"
-pythonpath = ["."]
+pythonpath = [".", ".."]
 testpaths = ["fleet/tests", "catalog/tests", "rollouts/tests", "alerts/tests", "../agent/tests"]

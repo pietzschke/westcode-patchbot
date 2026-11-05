@@ -6,7 +6,7 @@ import { HostsPage } from './hosts-page';
 import { SERVICE_LOGOS, getLogoSvg } from '../core/logos';
 
 describe('ServicesPage', () => {
-  it('renders service logos in two urgency groups and keeps a single primary action button in the plan panel', () => {
+  it('renders service logos in two urgency groups and keeps a single primary action button in the detail panel', () => {
     TestBed.configureTestingModule({
       imports: [ServicesPage],
       providers: [provideHttpClient(), provideHttpClientTesting()],
@@ -37,10 +37,11 @@ describe('ServicesPage', () => {
     expect(el.querySelectorAll('.service-row').length).toBe(1);
     expect(el.querySelector('.service-row .svc-logo svg')).toBeTruthy();
     expect(el.querySelectorAll('.btn-primary').length).toBe(1);
-    expect(el.querySelector('#execute-plan-btn')?.textContent).toContain('Plan ausführen');
+    expect(el.querySelector('#copy-runbook-btn')?.textContent).toContain('Runbook kopieren');
+    expect(el.querySelector('#execute-plan-btn')).toBeNull();
   });
 
-  it('switches selected service on row click, keeps zero buttons in service rows, and executes rollout plan via API', () => {
+  it('switches selected service on row click, keeps zero buttons in service rows, and copies the runbook without any API call', () => {
     TestBed.configureTestingModule({
       imports: [ServicesPage],
       providers: [provideHttpClient(), provideHttpClientTesting()],
@@ -90,35 +91,15 @@ describe('ServicesPage', () => {
 
     expect(el.querySelector('#p-title')?.textContent).toContain('PostgreSQL (Alpine Container)');
 
-    const execBtn = el.querySelector<HTMLButtonElement>('#execute-plan-btn')!;
-    execBtn.click();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
 
-    const planReq = httpMock.expectOne('/api/services/postgres/plan/');
-    expect(planReq.request.method).toBe('POST');
-    planReq.flush({
-      id: 'plan-123',
-      service_group: 'postgres',
-      service_slug: 'postgres',
-      status: 'READY',
-      block_reason: '',
-      created_at: '2026-11-03T16:00:00Z',
-      steps: [],
-    });
+    el.querySelector<HTMLButtonElement>('#copy-runbook-btn')!.click();
 
-    const execReq = httpMock.expectOne('/api/plans/plan-123/execute/');
-    expect(execReq.request.method).toBe('POST');
-    execReq.flush({
-      id: 'plan-123',
-      service_group: 'postgres',
-      service_slug: 'postgres',
-      status: 'RUNNING',
-      block_reason: '',
-      created_at: '2026-11-03T16:00:00Z',
-      steps: [],
-    });
-    fixture.detectChanges();
-
-    expect(el.querySelector('#p-status-block')?.textContent).toContain('RUNNING');
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(writeText.mock.calls[0][0]).toContain('db1.westcode.de');
+    httpMock.expectNone((req) => req.url.includes('/plan'));
+    httpMock.verify();
   });
 
   it('provides inline SVG logos for all 9 core services and a fallback initial badge', () => {
@@ -159,7 +140,7 @@ describe('ServicesPage', () => {
     expect(el.querySelector('.badge-eol')?.textContent).toContain('EOL');
   });
 
-  it('surfaces BLOCKED rollout plans without calling /execute/ and renders the block reason', () => {
+  it('opens the linked PR in a new tab without creating a rollout plan', () => {
     TestBed.configureTestingModule({
       imports: [ServicesPage],
       providers: [provideHttpClient(), provideHttpClientTesting()],
@@ -178,35 +159,27 @@ describe('ServicesPage', () => {
         target_version: '2.1.2',
         highest_cve_id: 'CVE-2026-3104',
         summary_line: 'Auth-Bypass im Klick-Tracking behoben',
-        git_targets: [],
-        host_targets: [
-          { hostname: 'c2.westcode.de', working_dir: '/opt/plausible', running_version: '2.1.0', target_version: '2.1.2', git_clean: false },
+        git_targets: [
+          {
+            repo_full_name: 'westcoder/westcode-web',
+            file_path: 'deploy/compose.yaml',
+            pr_number: 142,
+            pr_url: 'https://github.com/westcoder/westcode-web/pull/142',
+            ci_status: 'success',
+          },
         ],
+        host_targets: [],
       },
     ]);
     fixture.detectChanges();
 
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
     const el: HTMLElement = fixture.nativeElement;
-    const execBtn = el.querySelector<HTMLButtonElement>('#execute-plan-btn')!;
-    execBtn.click();
+    el.querySelector<HTMLButtonElement>('#open-pr-btn')!.click();
 
-    const planReq = httpMock.expectOne('/api/services/plausible/plan/');
-    expect(planReq.request.method).toBe('POST');
-    planReq.flush({
-      id: 'plan-blocked-99',
-      service_group: 'plausible',
-      service_slug: 'plausible',
-      status: 'BLOCKED',
-      block_reason: 'Lokale Git-Änderungen (dirty working tree) auf c2.westcode.de (/opt/plausible)',
-      created_at: '2026-11-03T16:00:00Z',
-      steps: [],
-    });
-
-    httpMock.expectNone('/api/plans/plan-blocked-99/execute/');
-    fixture.detectChanges();
-
-    const statusBlock = el.querySelector('#p-status-block')?.textContent ?? '';
-    expect(statusBlock).toContain('BLOCKED');
-    expect(statusBlock).toContain('dirty working tree');
+    expect(openSpy).toHaveBeenCalledWith('https://github.com/westcoder/westcode-web/pull/142', '_blank', 'noopener');
+    httpMock.expectNone((req) => req.url.includes('/plan'));
+    httpMock.verify();
+    openSpy.mockRestore();
   });
 });

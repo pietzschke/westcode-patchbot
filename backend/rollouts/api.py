@@ -1,7 +1,6 @@
 import hashlib
 import secrets
 from typing import Any
-from uuid import UUID
 
 from django.shortcuts import get_object_or_404
 from rest_framework import status
@@ -13,8 +12,6 @@ from catalog.correlator import PROJECT_STACK_METADATA
 from catalog.live_sync import run_live_sync
 from catalog.models import ServiceGroup
 from fleet.models import Host
-from rollouts.models import RolloutPlan
-from rollouts.orchestrator import create_rollout_plan, start_rollout_plan
 
 
 def _project_display_name_and_logo(stack_name: str) -> tuple[str, str]:
@@ -90,39 +87,6 @@ def serialize_service_group(sg: ServiceGroup) -> dict[str, Any]:
     }
 
 
-def serialize_rollout_plan(plan: RolloutPlan) -> dict[str, Any]:
-    steps = plan.steps.select_related("host", "git_target", "agent_job").order_by("order")
-    return {
-        "id": str(plan.id),
-        "service_group": plan.service_group.slug,
-        "service_slug": plan.service_group.slug,
-        "service_display_name": plan.service_group.display_name,
-        "service_logo_key": plan.service_group.logo_key,
-        "status": plan.status,
-        "block_reason": plan.block_reason,
-        "created_at": plan.created_at.isoformat(),
-        "steps": [
-            {
-                "id": s.id,
-                "order": s.order,
-                "step_type": s.step_type,
-                "status": s.status,
-                "hostname": s.host.hostname if s.host else None,
-                "host_slug": s.host.slug if s.host else None,
-                "repo_full_name": s.git_target.repo_full_name if s.git_target else None,
-                "pr_number": s.git_target.pr_number if s.git_target else None,
-                "pr_url": s.git_target.pr_url if s.git_target else None,
-                "working_dir": s.working_dir,
-                "compose_service": s.compose_service,
-                "target_version": s.target_version,
-                "agent_job_id": str(s.agent_job_id) if s.agent_job_id else None,
-                "result_payload": s.agent_job.result_payload if s.agent_job else None,
-            }
-            for s in steps
-        ],
-    }
-
-
 def serialize_host(host: Host) -> dict[str, Any]:
     pkgs = list(host.packages.all())
     containers = list(host.containers.all())
@@ -186,70 +150,6 @@ class ServiceListView(APIView):
         ).all()
         return Response(
             [serialize_service_group(sg) for sg in groups],
-            status=status.HTTP_200_OK,
-        )
-
-
-class ServicePlanCreateView(APIView):
-    authentication_classes = []
-    permission_classes = []
-
-    def post(self, request: Request, slug: str) -> Response:
-        sg = get_object_or_404(ServiceGroup, slug=slug)
-        plan = create_rollout_plan(sg)
-        return Response(
-            serialize_rollout_plan(plan),
-            status=status.HTTP_201_CREATED,
-        )
-
-
-class RolloutPlanListView(APIView):
-    authentication_classes = []
-    permission_classes = []
-
-    def get(self, request: Request) -> Response:
-        plans = RolloutPlan.objects.select_related("service_group").prefetch_related(
-            "steps__host",
-            "steps__git_target",
-            "steps__agent_job",
-        ).order_by("-created_at")[:50]
-        return Response(
-            [serialize_rollout_plan(p) for p in plans],
-            status=status.HTTP_200_OK,
-        )
-
-
-class RolloutPlanDetailView(APIView):
-    authentication_classes = []
-    permission_classes = []
-
-    def get(self, request: Request, plan_id: UUID) -> Response:
-        plan = get_object_or_404(RolloutPlan.objects.select_related("service_group"), id=plan_id)
-        return Response(
-            serialize_rollout_plan(plan),
-            status=status.HTTP_200_OK,
-        )
-
-
-class RolloutPlanExecuteView(APIView):
-    authentication_classes = []
-    permission_classes = []
-
-    def post(self, request: Request, plan_id: UUID) -> Response:
-        plan = get_object_or_404(RolloutPlan.objects.select_related("service_group"), id=plan_id)
-        if plan.status != "READY":
-            detail = (
-                plan.block_reason
-                if plan.block_reason
-                else f"Cannot execute RolloutPlan {plan.id}: status is {plan.status}"
-            )
-            return Response(
-                {"detail": detail, "plan": serialize_rollout_plan(plan)},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        updated_plan = start_rollout_plan(plan)
-        return Response(
-            serialize_rollout_plan(updated_plan),
             status=status.HTTP_200_OK,
         )
 

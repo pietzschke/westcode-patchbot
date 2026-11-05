@@ -1,8 +1,7 @@
 import { Component, OnInit, computed, effect, inject, signal } from '@angular/core';
 import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
-import { of, switchMap } from 'rxjs';
 import { getLogoSvg } from '../core/logos';
-import { PatchbotApi, RolloutPlanDto, ServiceGroupDto } from '../core/patchbot-api';
+import { PatchbotApi, ServiceGroupDto } from '../core/patchbot-api';
 
 @Component({
   selector: 'app-services-page',
@@ -14,7 +13,7 @@ import { PatchbotApi, RolloutPlanDto, ServiceGroupDto } from '../core/patchbot-a
           <h1 class="page-title">Nach Dienst</h1>
           <p class="page-sub">
             Nur behebbare Sicherheitslücken und ausstehende Rollouts auf laufenden Systemen.
-            Klicke auf einen Dienst für den Rollout-Plan.
+            Klicke auf einen Dienst für das manuelle Runbook.
           </p>
         </div>
         <div
@@ -324,56 +323,29 @@ import { PatchbotApi, RolloutPlanDto, ServiceGroupDto } from '../core/patchbot-a
                 </div>
               }
 
-              @if (activePlan(); as plan) {
-                <div class="plan-block" id="p-status-block">
-                  <div class="plan-block-title">
-                    <span>Rollout-Status</span>
-                    <strong>{{ plan.status }}</strong>
-                  </div>
-                  @if (plan.block_reason) {
-                    <div class="plan-item">
-                      <span style="color:var(--salmon-700);">{{ plan.block_reason }}</span>
-                    </div>
-                  }
-                  @for (step of plan.steps; track step.id) {
-                    <div class="plan-item">
-                      <div>
-                        <strong>#{{ step.order }}</strong>
-                        <span class="plan-item-sub">
-                          @if (step.step_type === 'github_merge') {
-                            GitHub Merge PR #{{ step.pr_number }} ({{ step.repo_full_name }})
-                          } @else {
-                            {{ step.hostname }} ({{ step.working_dir || step.step_type }})
-                          }
-                        </span>
-                      </div>
-                      <span style="font-weight:700;">{{ step.status }}</span>
-                    </div>
-                  }
-                </div>
+              <button
+                type="button"
+                id="copy-runbook-btn"
+                class="btn-primary"
+                (click)="copyRunbook(selected)"
+              >
+                Runbook kopieren ({{ selected.git_targets.length }} Git · {{ selected.host_targets.length }} Hosts)
+              </button>
+
+              @if (firstPrUrl(selected); as prUrl) {
+                <button
+                  type="button"
+                  id="open-pr-btn"
+                  class="btn-secondary btn-standard"
+                  (click)="openPr(prUrl)"
+                >
+                  PR auf GitHub öffnen
+                </button>
               }
 
-              <button
-                type="button"
-                id="execute-plan-btn"
-                class="btn-primary"
-                (click)="executeSelectedPlan(selected)"
-              >
-                Plan ausführen ({{ selected.git_targets.length }} Git · {{ selected.host_targets.length }} Hosts)
-              </button>
-
-              <button
-                type="button"
-                class="btn-secondary btn-standard"
-                (click)="preparePlanOnly(selected)"
-              >
-                Nur Git-PRs öffnen
-              </button>
-
               <p class="plan-check-note">
-                Kein Live-Patching und kein SSH-Zugriff vom Patchbot aus: Der Plan prüft Vorbedingungen
-                (CI-Status &amp; Git-Drift), kopiert das manuelle Runbook in deine Zwischenablage und
-                protokolliert den Vorgang in der Historie.
+                Kein Live-Patching und kein SSH-Zugriff vom Patchbot aus: Das Runbook wird in deine
+                Zwischenablage kopiert, damit du die Befehle selbst im eigenen Terminal ausführst.
               </p>
             </div>
           </aside>
@@ -388,7 +360,6 @@ export class ServicesPage implements OnInit {
 
   readonly services = signal<ServiceGroupDto[]>([]);
   readonly selectedSlug = signal<string>('');
-  readonly activePlan = signal<RolloutPlanDto | null>(null);
   readonly copiedFeedback = signal<boolean>(false);
   readonly groupBy = signal<'urgency' | 'project'>('urgency');
 
@@ -489,7 +460,6 @@ export class ServicesPage implements OnInit {
 
   selectService(service: ServiceGroupDto): void {
     this.selectedSlug.set(service.slug);
-    this.activePlan.set(null);
     this.copiedFeedback.set(false);
   }
 
@@ -516,17 +486,17 @@ export class ServicesPage implements OnInit {
       .join('\n');
   }
 
-  preparePlanOnly(service: ServiceGroupDto): void {
-    const firstWithUrl = service.git_targets.find((gt) => !!gt.pr_url);
-    if (firstWithUrl?.pr_url && typeof window !== 'undefined' && typeof window.open === 'function') {
-      window.open(firstWithUrl.pr_url, '_blank', 'noopener');
-    }
-    this.api.createServicePlan(service.slug).subscribe((plan) => {
-      this.activePlan.set(plan);
-    });
+  firstPrUrl(service: ServiceGroupDto): string | null {
+    return service.git_targets.find((gt) => !!gt.pr_url)?.pr_url ?? null;
   }
 
-  executeSelectedPlan(service: ServiceGroupDto): void {
+  openPr(url: string): void {
+    if (typeof window !== 'undefined' && typeof window.open === 'function') {
+      window.open(url, '_blank', 'noopener');
+    }
+  }
+
+  copyRunbook(service: ServiceGroupDto): void {
     const runbook = this.buildManualRunbook(service);
     if (runbook && typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
       navigator.clipboard.writeText(runbook).then(
@@ -534,11 +504,5 @@ export class ServicesPage implements OnInit {
         () => {},
       );
     }
-    this.api
-      .createServicePlan(service.slug)
-      .pipe(switchMap((plan) => (plan.status === 'BLOCKED' ? of(plan) : this.api.executePlan(plan.id))))
-      .subscribe((executedPlan) => {
-        this.activePlan.set(executedPlan);
-      });
   }
 }

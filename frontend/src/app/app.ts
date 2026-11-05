@@ -49,9 +49,6 @@ import { PatchbotApi } from './core/patchbot-api';
         <a class="nav-link" routerLink="/hosts" routerLinkActive="active">
           Nach Host (23)
         </a>
-        <a class="nav-link" routerLink="/rollouts" routerLinkActive="active">
-          Rollout-Historie
-        </a>
       </nav>
       <div class="fleet-health" style="display:flex;align-items:center;gap:12px;">
         <span class="dot ok"></span>

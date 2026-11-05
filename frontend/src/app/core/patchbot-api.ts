@@ -74,35 +74,6 @@ export interface ProjectDto {
   services: ServiceGroupDto[];
 }
 
-export interface RolloutStepDto {
-  id: number;
-  order: number;
-  step_type: string;
-  status: string;
-  hostname?: string | null;
-  host_slug?: string | null;
-  repo_full_name?: string | null;
-  pr_number?: number | null;
-  pr_url?: string | null;
-  working_dir?: string;
-  compose_service?: string;
-  target_version?: string;
-  agent_job_id?: string | null;
-  result_payload?: Record<string, unknown> | null;
-}
-
-export interface RolloutPlanDto {
-  id: string;
-  service_group: string;
-  service_slug: string;
-  service_display_name?: string;
-  service_logo_key?: string;
-  status: string;
-  block_reason: string;
-  created_at: string;
-  steps: RolloutStepDto[];
-}
-
 export interface HostContainerDto {
   name: string;
   image_tag: string;
@@ -174,18 +145,6 @@ export class PatchbotApi {
 
   listProjects(): Observable<ProjectDto[]> {
     return this.http.get<ProjectDto[]>('/api/projects/');
-  }
-
-  createServicePlan(slug: string): Observable<RolloutPlanDto> {
-    return this.http.post<RolloutPlanDto>(`/api/services/${encodeURIComponent(slug)}/plan/`, {});
-  }
-
-  executePlan(planId: string): Observable<RolloutPlanDto> {
-    return this.http.post<RolloutPlanDto>(`/api/plans/${encodeURIComponent(planId)}/execute/`, {});
-  }
-
-  listPlans(): Observable<RolloutPlanDto[]> {
-    return this.http.get<RolloutPlanDto[]>('/api/plans/');
   }
 
   listHosts(): Observable<HostDto[]> {

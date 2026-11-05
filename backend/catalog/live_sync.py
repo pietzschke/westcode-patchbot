@@ -8,7 +8,7 @@ from typing import Any
 from catalog.correlator import rebuild_service_groups
 from catalog.renovate_sync import parse_renovate_pr
 from fleet.infra_sync import sync_infra_hosts
-from fleet.models import Host, HostContainer
+from fleet.models import Host
 
 WESTCODE_SERVICE_DEPLOYMENTS: list[dict[str, Any]] = [
     {
@@ -408,35 +408,7 @@ def run_live_sync(
         # Clean up any non-infra stray hosts if present
         sync_infra_hosts(infra_root)
 
-    # Populate expected containers from Westcode deployments for hosts not yet live-probed via SSH/Agent
-    for spec in WESTCODE_SERVICE_DEPLOYMENTS:
-        slug = spec["slug"]
-        repo_dir = projects_root / spec["local_dir"]
-        version = _detect_local_repo_version(repo_dir)
-        git_clean = _is_local_git_clean(repo_dir)
-        image_repo = spec["image_repo"]
-        is_ecr = spec["is_ecr"]
-
-        for host_slug in spec["hosts"]:
-            host = Host.objects.filter(slug=host_slug).first()
-            if not host or host.last_seen_at is not None:
-                continue
-            HostContainer.objects.update_or_create(
-                host=host,
-                name=spec["compose_service"],
-                defaults={
-                    "container_id": f"{slug}-{host.slug}",
-                    "image_tag": f"{image_repo}:{version}",
-                    "image_id": f"sha256:{slug}-{version}",
-                    "repo_digests": [f"{image_repo}@sha256:{slug}"] if is_ecr else [],
-                    "oci_title": slug,
-                    "oci_revision": version,
-                    "working_dir": spec["working_dir"],
-                    "compose_service": spec["compose_service"],
-                    "git_clean": git_clean,
-                    "status": "running",
-                },
-            )
+    # v2: containers are only ever created from real agent reports (no synthetic records).
 
     if run_gh:
         prs = fetch_github_open_prs("westcoder")

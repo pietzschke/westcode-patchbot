@@ -7,7 +7,6 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PATCHBOT_URL="${PATCHBOT_URL:-https://patch.westcode.de}"
 PATCHBOT_TOKEN="${PATCHBOT_TOKEN:?PATCHBOT_TOKEN environment variable is required}"
 PATCHBOT_HOSTNAME="${PATCHBOT_HOSTNAME:-$(hostname -f)}"
-PATCHBOT_ALLOWED_ROOT="${PATCHBOT_ALLOWED_ROOT:-/opt}"
 
 AGENT_SRC="${REPO_ROOT}/agent/patchbot_agent.py"
 AGENT_BIN="/usr/local/libexec/westcode-patchbot-agent"
@@ -24,7 +23,6 @@ cat > "${ENV_FILE}" <<EOF
 PATCHBOT_URL=${PATCHBOT_URL}
 PATCHBOT_TOKEN=${PATCHBOT_TOKEN}
 PATCHBOT_HOSTNAME=${PATCHBOT_HOSTNAME}
-PATCHBOT_ALLOWED_ROOT=${PATCHBOT_ALLOWED_ROOT}
 EOF
 chmod 0600 "${ENV_FILE}"
 

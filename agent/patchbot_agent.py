@@ -1,3 +1,10 @@
+"""Westcode Patchbot host agent: read-only, push-only telemetry reporter.
+
+Collects host inventory with read-only commands and posts it to
+``/api/agent/report/``. It contains no code path that changes the host and
+never acts on server responses.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -7,20 +14,14 @@ from pathlib import Path
 import re
 import socket
 import subprocess
-import time
 from typing import Any, Callable, Tuple
-import urllib.error
 import urllib.request
 
 RunnerCallable = Callable[..., Tuple[int, str, str]]
 
-ALLOWED_ACTION_TYPES = frozenset({"precheck", "compose_update", "apt_upgrade", "host_reboot"})
-COMPOSE_FILENAMES = ("compose.yaml", "compose.yml", "docker-compose.yml", "docker-compose.yaml")
-
 _APT_INST_RE = re.compile(
     r"^Inst\s+(?P<name>\S+)(?:\s+\[(?P<installed>[^\]]+)\])?\s+\((?P<candidate>\S+)\s+(?P<origin>[^)]+)\)"
 )
-_IMAGE_LINE_RE = re.compile(r"^(\s*image:\s*)(\S+)(\s*(?:#.*)?)$", re.MULTILINE)
 
 
 def default_runner(cmd: list[str], cwd: str | Path | None = None) -> tuple[int, str, str]:
@@ -36,23 +37,6 @@ def default_runner(cmd: list[str], cwd: str | Path | None = None) -> tuple[int, 
     except OSError as exc:
         return (127, "", str(exc))
     return (proc.returncode, proc.stdout, proc.stderr)
-
-
-def validate_opt_workdir(working_dir: str, allowed_root: Path = Path("/opt")) -> Path:
-    """Ensure working_dir resolves to a canonical subdirectory inside allowed_root."""
-    root = Path(allowed_root).resolve()
-    target = Path(working_dir).resolve()
-    try:
-        rel = target.relative_to(root)
-    except ValueError as exc:
-        raise ValueError(
-            f"Working directory '{working_dir}' resolves outside allowed root '{root}'"
-        ) from exc
-    if rel == Path("."):
-        raise ValueError(
-            f"Working directory '{working_dir}' must be a subdirectory inside allowed root '{root}'"
-        )
-    return target
 
 
 def parse_apt_simulation(sim_output: str) -> list[dict]:
@@ -75,14 +59,6 @@ def parse_apt_simulation(sim_output: str) -> list[dict]:
             }
         )
     return packages
-
-
-def _find_compose_file(workdir: Path) -> Path | None:
-    for name in COMPOSE_FILENAMES:
-        candidate = workdir / name
-        if candidate.is_file():
-            return candidate
-    return None
 
 
 def _parse_os_release(os_release_path: Path) -> tuple[str, str]:
@@ -182,318 +158,6 @@ def collect_host_inventory(
     }
 
 
-def run_precheck(
-    working_dir: str,
-    target_image: str,
-    runner: RunnerCallable = default_runner,
-    allowed_root: Path = Path("/opt"),
-) -> dict:
-    """Validate `/opt` working directory, compose file existence, and clean git status."""
-    workdir = validate_opt_workdir(working_dir, allowed_root=allowed_root)
-    compose_file = _find_compose_file(workdir)
-    if compose_file is None:
-        return {
-            "ok": False,
-            "git_clean": False,
-            "compose_file": "",
-            "reason": f"No compose file found in {workdir}",
-        }
-
-    git_rc, git_out, git_err = runner(["git", "status", "--porcelain"], cwd=str(workdir))
-    if git_rc != 0 or git_out.strip() != "":
-        return {
-            "ok": False,
-            "git_clean": False,
-            "compose_file": str(compose_file),
-            "reason": "Working directory has uncommitted git changes or dirty tree",
-        }
-
-    if not target_image or not target_image.strip():
-        return {
-            "ok": False,
-            "git_clean": True,
-            "compose_file": str(compose_file),
-            "reason": "target_image must not be empty",
-        }
-
-    return {
-        "ok": True,
-        "git_clean": True,
-        "compose_file": str(compose_file),
-        "reason": "ok",
-    }
-
-
-def _format_target_image(current_img: str, target_image: str) -> str:
-    """Resolve target_image against current_img, preserving repo and v-prefix on bare version tags."""
-    if "/" not in target_image and ":" not in target_image and "@" not in target_image:
-        if ":" in current_img:
-            repo_part, current_tag = current_img.rsplit(":", 1)
-            if re.match(r"^v\d", current_tag) and re.match(r"^\d", target_image):
-                new_tag = f"v{target_image}"
-            else:
-                new_tag = target_image
-            return f"{repo_part}:{new_tag}"
-        repo_part = current_img.split("@", 1)[0]
-        return f"{repo_part}:{target_image}"
-    return target_image
-
-
-def _rewrite_compose_image(content: str, target_image: str, service: str = "") -> str:
-    """Update the image reference in compose YAML content while preserving indentation."""
-    if service:
-        service_header_re = re.compile(rf"^(\s*){re.escape(service)}:\s*(?:#.*)?$")
-        lines = content.splitlines(keepends=True)
-        in_service = False
-        service_indent = 0
-        for idx, line in enumerate(lines):
-            raw = line.rstrip("\r\n")
-            eol = line[len(raw) :]
-            stripped = raw.strip()
-            if not stripped or stripped.startswith("#"):
-                continue
-            leading = len(raw) - len(raw.lstrip(" "))
-            if in_service:
-                if leading <= service_indent:
-                    in_service = False
-                else:
-                    img_match = _IMAGE_LINE_RE.match(raw)
-                    if img_match:
-                        new_img = _format_target_image(img_match.group(2), target_image)
-                        lines[idx] = f"{img_match.group(1)}{new_img}{img_match.group(3)}{eol}"
-                        return "".join(lines)
-            if not in_service:
-                hdr_match = service_header_re.match(raw)
-                if hdr_match:
-                    in_service = True
-                    service_indent = len(hdr_match.group(1))
-
-    if "/" in target_image or ":" in target_image or "@" in target_image:
-        target_repo = target_image.split(":", 1)[0].split("@", 1)[0]
-
-        def _replace_matching_repo(match: re.Match[str]) -> str:
-            current_img = match.group(2)
-            current_repo = current_img.split(":", 1)[0].split("@", 1)[0]
-            if current_repo == target_repo:
-                return f"{match.group(1)}{target_image}{match.group(3)}"
-            return match.group(0)
-
-        updated = _IMAGE_LINE_RE.sub(_replace_matching_repo, content)
-        if updated != content:
-            return updated
-
-    return _IMAGE_LINE_RE.sub(
-        lambda m: f"{m.group(1)}{_format_target_image(m.group(2), target_image)}{m.group(3)}",
-        content,
-        count=1,
-    )
-
-
-def _poll_health(
-    workdir: Path,
-    service: str,
-    healthcheck_url: str | None,
-    runner: RunnerCallable,
-    timeout_sec: int,
-    poll_interval_sec: float = 0.2,
-) -> bool:
-    deadline = time.monotonic() + max(timeout_sec, 0)
-    while True:
-        if healthcheck_url:
-            try:
-                with urllib.request.urlopen(healthcheck_url, timeout=2) as response:
-                    status_code = getattr(response, "status", response.getcode())
-                    if 200 <= int(status_code) < 300:
-                        return True
-            except (urllib.error.URLError, TimeoutError, ValueError, OSError):
-                pass
-        else:
-            rc, out, _ = runner(
-                ["docker", "compose", "ps", "--format", "json", service],
-                cwd=str(workdir),
-            )
-            if rc == 0:
-                stripped = out.strip()
-                if stripped:
-                    try:
-                        first_line = stripped.splitlines()[0]
-                        payload = json.loads(first_line)
-                        if isinstance(payload, list):
-                            payload = payload[0] if payload else {}
-                        if isinstance(payload, dict) and payload:
-                            state = str(payload.get("State", "")).lower()
-                            health = str(payload.get("Health", "")).lower()
-                            if state == "running" and health not in {"unhealthy", "starting"}:
-                                return True
-                    except json.JSONDecodeError:
-                        pass
-
-        if time.monotonic() >= deadline:
-            return False
-        time.sleep(poll_interval_sec)
-
-
-def execute_compose_update(
-    working_dir: str,
-    service: str,
-    target_image: str,
-    healthcheck_url: str | None,
-    runner: RunnerCallable = default_runner,
-    allowed_root: Path = Path("/opt"),
-    timeout_sec: int = 60,
-) -> dict:
-    """Update a compose service to target_image, verify health, or roll back automatically."""
-    workdir = validate_opt_workdir(working_dir, allowed_root=allowed_root)
-    compose_file = _find_compose_file(workdir)
-    if compose_file is None:
-        raise FileNotFoundError(f"No compose file found in {workdir}")
-
-    precheck = run_precheck(
-        working_dir=working_dir,
-        target_image=target_image,
-        runner=runner,
-        allowed_root=allowed_root,
-    )
-    if not precheck["ok"]:
-        return {
-            "status": "failed",
-            "prev_image_id": "",
-            "new_image_id": "",
-            "logs": precheck["reason"],
-        }
-
-    original_compose = compose_file.read_text(encoding="utf-8")
-
-    _, prev_img_out, _ = runner(
-        ["docker", "compose", "images", "-q", service],
-        cwd=str(workdir),
-    )
-    prev_image_id = prev_img_out.strip()
-
-    updated_compose = _rewrite_compose_image(original_compose, target_image, service=service)
-    compose_file.write_text(updated_compose, encoding="utf-8")
-
-    pull_rc, _, pull_err = runner(["docker", "compose", "pull", service], cwd=str(workdir))
-    up_rc, _, up_err = (
-        runner(["docker", "compose", "up", "-d", "--remove-orphans", service], cwd=str(workdir))
-        if pull_rc == 0
-        else (pull_rc, "", pull_err)
-    )
-
-    is_healthy = False
-    if pull_rc == 0 and up_rc == 0:
-        is_healthy = _poll_health(
-            workdir=workdir,
-            service=service,
-            healthcheck_url=healthcheck_url,
-            runner=runner,
-            timeout_sec=timeout_sec,
-        )
-
-    if is_healthy:
-        _, new_img_out, _ = runner(
-            ["docker", "compose", "images", "-q", service],
-            cwd=str(workdir),
-        )
-        return {
-            "status": "succeeded",
-            "prev_image_id": prev_image_id,
-            "new_image_id": new_img_out.strip(),
-            "logs": "",
-        }
-
-    _, logs_out, logs_err = runner(
-        ["docker", "compose", "logs", "--tail", "100", service],
-        cwd=str(workdir),
-    )
-    combined_logs = "\n".join(
-        part for part in (pull_err.strip(), up_err.strip(), logs_out.strip(), logs_err.strip()) if part
-    )
-
-    compose_file.write_text(original_compose, encoding="utf-8")
-    rb_rc, _, _ = runner(
-        ["docker", "compose", "up", "-d", "--remove-orphans"],
-        cwd=str(workdir),
-    )
-    status = "rolled_back" if rb_rc == 0 else "failed"
-    return {
-        "status": status,
-        "prev_image_id": prev_image_id,
-        "new_image_id": "",
-        "logs": combined_logs,
-    }
-
-
-def dispatch_agent_job(
-    job: dict[str, Any],
-    runner: RunnerCallable | None = None,
-    allowed_root: Path = Path("/opt"),
-) -> dict[str, Any]:
-    """Dispatch a single queued control-plane job using a fixed action enum."""
-    active_runner = runner or default_runner
-    action_type = job.get("action_type", "")
-    if action_type not in ALLOWED_ACTION_TYPES:
-        raise ValueError(f"Unsupported action_type: {action_type!r}")
-
-    payload = job.get("payload") or {}
-
-    if action_type == "precheck":
-        target_image = str(payload.get("target_image") or payload.get("target_version") or "").strip()
-        if not target_image:
-            raise ValueError("target_image or target_version is required")
-        return run_precheck(
-            working_dir=str(payload["working_dir"]),
-            target_image=target_image,
-            runner=active_runner,
-            allowed_root=allowed_root,
-        )
-
-    if action_type == "compose_update":
-        target_image = str(payload.get("target_image") or payload.get("target_version") or "").strip()
-        if not target_image:
-            raise ValueError("target_image or target_version is required")
-        return execute_compose_update(
-            working_dir=str(payload["working_dir"]),
-            service=str(payload["service"]),
-            target_image=target_image,
-            healthcheck_url=payload.get("healthcheck_url"),
-            runner=active_runner,
-            allowed_root=allowed_root,
-            timeout_sec=int(payload.get("timeout_sec", 60)),
-        )
-
-    if action_type == "apt_upgrade":
-        upd_rc, upd_out, upd_err = active_runner(["apt-get", "update", "-q"])
-        if upd_rc != 0:
-            return {"status": "failed", "logs": (upd_out + "\n" + upd_err).strip()}
-        upg_rc, upg_out, upg_err = active_runner(
-            [
-                "apt-get",
-                "-y",
-                "-o",
-                "Dpkg::Options::=--force-confdef",
-                "-o",
-                "Dpkg::Options::=--force-confold",
-                "dist-upgrade",
-            ]
-        )
-        return {
-            "status": "succeeded" if upg_rc == 0 else "failed",
-            "logs": (upg_out + "\n" + upg_err).strip(),
-        }
-
-    if action_type == "host_reboot":
-        rb_rc, rb_out, rb_err = active_runner(
-            ["shutdown", "-r", "+1", "Westcode Patchbot scheduled reboot"]
-        )
-        return {
-            "status": "succeeded" if rb_rc == 0 else "failed",
-            "logs": (rb_out + "\n" + rb_err).strip(),
-        }
-
-    raise ValueError(f"Unsupported action_type: {action_type!r}")
-
-
 def _http_json(
     url: str,
     method: str = "GET",
@@ -532,10 +196,6 @@ def main(argv: list[str] | None = None) -> int:
         default=os.environ.get("PATCHBOT_HOSTNAME") or socket.gethostname(),
     )
     parser.add_argument(
-        "--allowed-root",
-        default=os.environ.get("PATCHBOT_ALLOWED_ROOT", "/opt"),
-    )
-    parser.add_argument(
         "--collect-json",
         action="store_true",
         help="Collect host inventory and print JSON to stdout without server reporting",
@@ -548,29 +208,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     base = args.server_url.rstrip("/")
-    allowed_root = Path(args.allowed_root)
-
     inventory = collect_host_inventory(runner=default_runner)
     inventory["hostname"] = args.hostname
+    # Push-only: the response body is deliberately ignored. The agent never
+    # receives or executes instructions from the server.
     _http_json(f"{base}/api/agent/report/", method="POST", token=args.token, payload=inventory)
-
-    next_job = _http_json(f"{base}/api/agent/jobs/next/", method="GET", token=args.token)
-    job_id = next_job.get("id") if isinstance(next_job, dict) else None
-    if job_id:
-        try:
-            outcome = dispatch_agent_job(
-                next_job,
-                runner=default_runner,
-                allowed_root=allowed_root,
-            )
-        except Exception as exc:
-            outcome = {"status": "FAILED", "logs": str(exc)}
-        _http_json(
-            f"{base}/api/agent/jobs/{job_id}/result/",
-            method="POST",
-            token=args.token,
-            payload=outcome,
-        )
     return 0
 
 

@@ -1,5 +1,4 @@
 from datetime import date
-from uuid import UUID
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import status
@@ -8,10 +7,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from fleet.auth import HostTokenAuthentication
 from fleet.infra_sync import is_distro_eol
-from fleet.models import AgentJob, Host, HostContainer, HostPackage
-
-ALLOWED_JOB_RESULT_STATUSES = frozenset({"SUCCEEDED", "ROLLED_BACK", "FAILED"})
-
+from fleet.models import Host, HostContainer, HostPackage
 
 def _get_authenticated_host(request: Request) -> Host | None:
     if isinstance(request.auth, Host):
@@ -113,103 +109,3 @@ class AgentReportView(APIView):
             status=status.HTTP_200_OK,
         )
 
-
-class AgentNextJobView(APIView):
-    authentication_classes = [HostTokenAuthentication]
-    permission_classes = []
-
-    def get(self, request: Request) -> Response:
-        host = _get_authenticated_host(request)
-        if host is None:
-            return Response(
-                {"detail": "Host authentication required."},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
-
-        with transaction.atomic():
-            job = (
-                AgentJob.objects.filter(host=host, status="PENDING")
-                .select_for_update()
-                .order_by("created_at", "id")
-                .first()
-            )
-            if job is None:
-                return Response({"id": None, "job": None}, status=status.HTTP_200_OK)
-
-            job.status = "DISPATCHED"
-            job.save(update_fields=["status"])
-
-        return Response(
-            {
-                "id": str(job.id),
-                "action_type": job.action_type,
-                "payload": job.payload,
-                "status": job.status,
-                "created_at": job.created_at.isoformat(),
-            },
-            status=status.HTTP_200_OK,
-        )
-
-
-class AgentJobResultView(APIView):
-    authentication_classes = [HostTokenAuthentication]
-    permission_classes = []
-
-    def post(self, request: Request, job_id: UUID) -> Response:
-        host = _get_authenticated_host(request)
-        if host is None:
-            return Response(
-                {"detail": "Host authentication required."},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
-
-        job = AgentJob.objects.filter(id=job_id).first()
-        if job is None:
-            return Response(
-                {"detail": "Job not found."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        if job.host_id != host.id:
-            return Response(
-                {"detail": "Job does not belong to authenticated host."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
-        data = request.data if isinstance(request.data, dict) else {}
-        raw_status = str(data.get("status", "") or "").strip().upper()
-        if not raw_status and "ok" in data:
-            raw_status = "SUCCEEDED" if bool(data["ok"]) else "FAILED"
-
-        if raw_status not in ALLOWED_JOB_RESULT_STATUSES:
-            return Response(
-                {"detail": f"Invalid job status: {raw_status!r}."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        if "result_payload" in data and isinstance(data["result_payload"], dict):
-            result_payload = data["result_payload"]
-        else:
-            result_payload = {k: v for k, v in data.items() if k != "status"}
-
-        job.status = raw_status
-        job.result_payload = result_payload
-        job.save(update_fields=["status", "result_payload"])
-
-        try:
-            has_rollout_step = hasattr(job, "rollout_step") and job.rollout_step is not None
-        except Exception:
-            has_rollout_step = False
-        if has_rollout_step:
-            from rollouts.orchestrator import advance_rollout_on_job_result
-
-            advance_rollout_on_job_result(job)
-
-        return Response(
-            {
-                "id": str(job.id),
-                "status": job.status,
-                "result_payload": job.result_payload,
-            },
-            status=status.HTTP_200_OK,
-        )

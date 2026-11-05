@@ -1,4 +1,3 @@
-import uuid
 from django.db import models
 
 
@@ -56,30 +55,3 @@ class HostContainer(models.Model):
     def __str__(self) -> str:
         return f"{self.host.hostname}:{self.name} ({self.image_tag})"
 
-
-class AgentJob(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    host = models.ForeignKey(Host, on_delete=models.CASCADE, related_name="jobs")
-    action_type = models.CharField(max_length=64)
-    payload = models.JSONField(default=dict)
-    status = models.CharField(max_length=32, default="PENDING")
-    result_payload = models.JSONField(default=dict)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        ordering = ["created_at"]
-
-    @property
-    def result_logs(self) -> str:
-        if isinstance(self.result_payload, dict):
-            return str(self.result_payload.get("logs", "") or "")
-        return ""
-
-    @result_logs.setter
-    def result_logs(self, value: str) -> None:
-        if not isinstance(self.result_payload, dict):
-            self.result_payload = {}
-        self.result_payload["logs"] = value
-
-    def __str__(self) -> str:
-        return f"AgentJob({self.id}, {self.host.hostname}, {self.action_type}, {self.status})"

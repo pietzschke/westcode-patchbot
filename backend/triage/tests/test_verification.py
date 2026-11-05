@@ -184,3 +184,13 @@ def test_os_eol_verifies_after_upgrade():
     host.save()
     verify_findings(github=FakeGitHub(), image_scan_lookup=no_scan, now=NOW)
     assert state(f) == "VERIFIED_LIVE"
+
+
+@pytest.mark.django_db
+def test_os_eol_with_unknown_eol_date_does_not_verify():
+    # An unknown (distro, version) pair leaves os_eol_date empty — that is no proof of a supported release.
+    host = make_host(slug="mdb", last_seen_at=NOW, os_distro="", os_version="", os_eol_date=None)
+    f = make_finding(layer="INFRASTRUCTURE", host=host, ecosystem="host", package_name="__os_eol__",
+                     state="IN_PROGRESS", discovered_at=NOW - timedelta(days=3))
+    verify_findings(github=FakeGitHub(), image_scan_lookup=no_scan, now=NOW)
+    assert state(f) == "IN_PROGRESS"

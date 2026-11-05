@@ -144,7 +144,8 @@ def _verify_infrastructure(finding: Finding, now) -> bool:
         _verify(finding, now, "Host meldet keinen ausstehenden Neustart mehr.")
         return True
     if finding.package_name == "__os_eol__":
-        if host.os_eol_date and (host.os_eol_date - now.date()).days <= EOL_WARNING_DAYS:
+        # An unknown EOL date (release missing from the EOL table) is no proof of a supported release.
+        if not host.os_eol_date or (host.os_eol_date - now.date()).days <= EOL_WARNING_DAYS:
             return False
         _verify(finding, now, f"Host läuft jetzt auf {host.os_distro} {host.os_version}.")
         return True

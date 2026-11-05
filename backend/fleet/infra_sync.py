@@ -130,16 +130,16 @@ def sync_infra_hosts(infra_root: Path, today: date | None = None) -> list[Host]:
                 "stack_name": stack_name,
                 "declared_image": declared_image,
             }
-            if declared_image is not None:
+            # The declared image is only a placeholder until the agent reports the live OS. After that the
+            # agent is authoritative (in-place release upgrades do not change servers.tf).
+            has_reported = Host.objects.filter(hostname=hostname, last_seen_at__isnull=False).exists()
+            if declared_image is not None and not has_reported:
                 os_distro, os_version = _parse_distro_version(declared_image)
-                eol = (
-                    is_distro_eol(os_distro, os_version, today=check_date)
-                    if os_distro and os_version
-                    else False
-                )
+                known = bool(os_distro and os_version)
                 defaults["os_distro"] = os_distro
                 defaults["os_version"] = os_version
-                defaults["is_os_eol"] = eol
+                defaults["is_os_eol"] = is_distro_eol(os_distro, os_version, today=check_date) if known else False
+                defaults["os_eol_date"] = distro_eol_date(os_distro, os_version) if known else None
 
             Host.objects.update_or_create(
                 hostname=hostname,

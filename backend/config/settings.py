@@ -115,3 +115,7 @@ PATCHBOT_CLAUDE_MODEL = os.environ.get("PATCHBOT_CLAUDE_MODEL", "claude-sonnet-5
 PATCHBOT_CLAUDE_EFFORT = os.environ.get("PATCHBOT_CLAUDE_EFFORT", "")  # empty = model default
 PATCHBOT_CLAUDE_REFUSAL_FALLBACK = os.environ.get("PATCHBOT_CLAUDE_REFUSAL_FALLBACK", "true").lower() == "true"
 PATCHBOT_TRIAGE_PROMPT_VERSION = "2026-11-05.1"
+
+# --- Slack ---
+SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN", "")
+SLACK_TEAM_CHANNEL_ID = os.environ.get("SLACK_TEAM_CHANNEL_ID", "")

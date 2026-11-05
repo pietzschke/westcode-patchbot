@@ -116,3 +116,27 @@ class FakeLLM:
         if self._raises is not None:
             raise self._raises
         return self._response
+
+
+class FakeSlack:
+    """Records Slack posts as (channel, text, blocks); fail=True raises SlackError on every call."""
+
+    def __init__(self, fail=False, users=None):
+        self.fail = fail
+        self.users = dict(users or {})
+        self.messages: list[tuple[str, str, list]] = []
+
+    def post_message(self, channel, text, blocks=None):
+        from triage.slack import SlackError
+
+        if self.fail:
+            raise SlackError("chat.postMessage: invalid_auth")
+        self.messages.append((channel, text, list(blocks or [])))
+        return f"ts-{len(self.messages)}"
+
+    def lookup_user_by_email(self, email):
+        from triage.slack import SlackError
+
+        if self.fail:
+            raise SlackError("users.lookupByEmail: invalid_auth")
+        return self.users.get(email)

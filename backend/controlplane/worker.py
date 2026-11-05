@@ -16,10 +16,10 @@ from inventory.notion_sync import sync_notion_projects
 from research.maintenance import request_analysis
 from research.models import MaintenanceUpdate
 from research.pipeline import lookup_image_scan, run_scan
-from research.signals_feed import refresh_epss, refresh_kev
+from research.signals_feed import apply_signals, refresh_epss, refresh_kev
 from triage.dismissal import evaluate_reopen_rules
 from triage.jobs import enqueue
-from triage.models import OPEN_STATES, Finding, Job, ScheduleState
+from triage.models import OPEN_STATES, PARKED_STATES, Finding, Job, ScheduleState
 from triage.notifications import escalate_overdue, record_health, send_new_finding_dms, sync_slack_user_ids
 from triage.schedule import due_jobs
 from triage.verification import verify_findings
@@ -65,8 +65,13 @@ def _notion_sync(job, d: Deps, now):
 
 def _signals_refresh(job, d: Deps, now):
     refresh_kev()
-    cves = {c for ids in Finding.objects.filter(state__in=OPEN_STATES).values_list("vulnerability_ids", flat=True) for c in ids}
+    # Parked findings need fresh signals too: a new KEV listing must be able to reopen a dismissal.
+    tracked = Finding.objects.filter(state__in=OPEN_STATES + PARKED_STATES)
+    cves = {c for ids in tracked.values_list("vulnerability_ids", flat=True) for c in ids}
     refresh_epss(cves)
+    for finding in tracked:
+        apply_signals(finding)
+    evaluate_reopen_rules(now=now)
 
 
 def _grace_eval(job, d: Deps, now):

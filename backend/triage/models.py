@@ -121,3 +121,26 @@ class FindingEvent(models.Model):
 
     def __str__(self) -> str:
         return f"{self.finding_id}: {self.from_state or '∅'} → {self.to_state} ({self.source})"
+
+
+class NotificationLog(models.Model):
+    """Every Slack message sent for a finding; the unique key makes sending idempotent."""
+
+    finding = models.ForeignKey(Finding, null=True, blank=True, on_delete=models.CASCADE, related_name="notifications")
+    kind = models.CharField(max_length=32)  # NEW_DM | ESCALATION | TRANSPARENCY
+    stage = models.IntegerField(default=0)
+    recipient = models.CharField(max_length=64)
+    slack_ts = models.CharField(max_length=64, blank=True, default="")
+    sent_at = models.DateTimeField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["finding", "kind", "stage", "recipient"], name="uniq_notification")
+        ]
+
+
+class IntegrationHealth(models.Model):
+    name = models.CharField(max_length=32, primary_key=True)  # slack | github | notion | anthropic
+    ok = models.BooleanField(default=True)
+    last_error = models.TextField(blank=True, default="")
+    checked_at = models.DateTimeField()

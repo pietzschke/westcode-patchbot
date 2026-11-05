@@ -119,3 +119,4 @@ PATCHBOT_TRIAGE_PROMPT_VERSION = "2026-11-05.1"
 # --- Slack ---
 SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN", "")
 SLACK_TEAM_CHANNEL_ID = os.environ.get("SLACK_TEAM_CHANNEL_ID", "")
+PATCHBOT_BASE_URL = os.environ.get("PATCHBOT_BASE_URL", "").rstrip("/")

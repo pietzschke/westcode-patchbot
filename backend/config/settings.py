@@ -18,6 +18,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "fleet",
     "inventory",
+    "triage",
     "catalog",
     "rollouts",
     "alerts",
@@ -99,3 +100,8 @@ NOTION_PROPERTY_NAMES = {
 NOTION_ACTIVE_STATUSES = ["In progress", "In maintenance"]
 NOTION_NOT_STARTED_STATUSES = ["Not started"]
 NOTION_CLOSED_STATUSES = ["Done", "GESPERRT!"]
+
+# --- Deadlines (working-day clock, decision D-2) ---
+PATCHBOT_TIMEZONE = "Europe/Berlin"
+PATCHBOT_HOLIDAY_SUBDIVISION = os.environ.get("PATCHBOT_HOLIDAY_SUBDIVISION", "NW")
+PATCHBOT_EXTRA_HOLIDAYS = [d.strip() for d in os.environ.get("PATCHBOT_EXTRA_HOLIDAYS", "").split(",") if d.strip()]

@@ -178,6 +178,21 @@ def test_installer_enables_timer_not_service():
     assert "enable --now westcode-patchbot-agent.service" not in text
 
 
+def test_requests_behind_the_tls_proxy_are_secure():
+    from django.test import RequestFactory
+
+    # gunicorn (--forwarded-allow-ips) already maps X-Forwarded-Proto to wsgi.url_scheme; Django trusts the
+    # header as well so is_secure()/build_absolute_uri() do not depend on that gunicorn flag.
+    command = " ".join(_compose()["services"]["web"]["command"])
+    assert "--forwarded-allow-ips" in command
+    request = RequestFactory().get("/api/health/", HTTP_X_FORWARDED_PROTO="https")
+    assert request.is_secure()
+    assert request.build_absolute_uri("/api/auth/entra/callback/").startswith("https://")
+    # The proxy must overwrite (not pass through) the header for this to be trustworthy.
+    runbook = (REPO_ROOT / "docs" / "runbooks" / "patchbot-v2-rollout.md").read_text(encoding="utf-8")
+    assert "proxy_set_header X-Forwarded-Proto https;" in runbook
+
+
 def test_installer_stops_v1_daemon_before_replacing_files_and_enabling_timer():
     # v1 ran the agent as a long-lived `Type=simple` + `Restart=always` service. A plain `disable` leaves that
     # process running (and the unit active), so the v2 timer would never fire on upgraded hosts.

@@ -67,6 +67,10 @@ SESSION_COOKIE_AGE = 12 * 60 * 60
 CSRF_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_HTTPONLY = False  # the Angular client reads csrftoken and sends X-CSRFToken
 CSRF_TRUSTED_ORIGINS = [o.strip() for o in os.environ.get("DJANGO_CSRF_TRUSTED_ORIGINS", "").split(",") if o.strip()]
+# TLS ends at the host reverse proxy, which overwrites X-Forwarded-Proto (runbook §4); web is only bound to
+# 127.0.0.1. gunicorn's --forwarded-allow-ips does the same mapping, this keeps is_secure() independent of it.
+# Host is passed through unchanged by nginx/Caddy, so USE_X_FORWARDED_HOST is deliberately not enabled.
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework.authentication.SessionAuthentication"],

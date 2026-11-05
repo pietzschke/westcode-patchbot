@@ -1,78 +1,6 @@
-import { Injectable, inject, signal } from '@angular/core';
+import { Injectable, inject } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
-import { Observable, tap } from 'rxjs';
-
-export interface GitTargetDto {
-  id?: number;
-  repo_full_name: string;
-  file_path: string;
-  pr_number: number | null;
-  pr_url?: string;
-  ci_status: string;
-  target_version?: string;
-}
-
-export interface HostTargetDto {
-  id?: number;
-  host_slug?: string;
-  hostname: string;
-  target_type?: string;
-  working_dir: string;
-  compose_service?: string;
-  running_version: string;
-  target_version: string;
-  git_clean: boolean | null;
-}
-
-export interface VulnerabilityDto {
-  id?: number;
-  vulnerability_id: string;
-  severity: string;
-  status: string;
-  fixed_version: string;
-  title: string;
-  package_name: string;
-}
-
-export interface ProjectRefDto {
-  slug: string;
-  display_name: string;
-  logo_key?: string;
-}
-
-export interface ServiceGroupDto {
-  id?: number;
-  slug: string;
-  display_name: string;
-  logo_key: string;
-  category: 'action_required' | 'ready' | string;
-  current_version_summary: string;
-  target_version: string;
-  highest_cve_id?: string;
-  highest_severity?: string;
-  summary_line: string;
-  projects?: ProjectRefDto[];
-  git_targets: GitTargetDto[];
-  host_targets: HostTargetDto[];
-  vulnerabilities?: VulnerabilityDto[];
-}
-
-export interface ProjectDto {
-  slug: string;
-  display_name: string;
-  logo_key: string;
-  category: 'action_required' | 'ready_to_rollout' | string;
-  summary_line: string;
-  cves_count: number;
-  prs_count: number;
-  pending_apt_count: number;
-  security_apt_count: number;
-  has_eol_host: boolean;
-  has_reboot_required: boolean;
-  has_git_dirty: boolean;
-  hosts: HostDto[];
-  services: ServiceGroupDto[];
-}
+import { Observable } from 'rxjs';
 
 export interface HostContainerDto {
   name: string;
@@ -136,15 +64,6 @@ export interface HostTokenResponseDto {
   token: string;
   install_command: string;
   host: HostDto;
-}
-
-export interface LiveSyncSummaryDto {
-  status: string;
-  hosts_count: number;
-  services_count: number;
-  prs_count: number;
-  vulns_count: number;
-  synced_at: string;
 }
 
 
@@ -335,15 +254,6 @@ export interface DismissPayload {
 @Injectable({ providedIn: 'root' })
 export class PatchbotApi {
   private readonly http = inject(HttpClient);
-  readonly refreshTick = signal<number>(0);
-
-  listServices(): Observable<ServiceGroupDto[]> {
-    return this.http.get<ServiceGroupDto[]>('/api/services/');
-  }
-
-  listProjects(): Observable<ProjectDto[]> {
-    return this.http.get<ProjectDto[]>('/api/projects/');
-  }
 
   listHosts(): Observable<HostDto[]> {
     return this.http.get<HostDto[]>('/api/hosts/');
@@ -351,14 +261,6 @@ export class PatchbotApi {
 
   generateHostToken(slug: string): Observable<HostTokenResponseDto> {
     return this.http.post<HostTokenResponseDto>(`/api/hosts/${encodeURIComponent(slug)}/token/`, {});
-  }
-
-  triggerLiveSync(): Observable<LiveSyncSummaryDto> {
-    return this.http.post<LiveSyncSummaryDto>('/api/sync/', {}).pipe(
-      tap(() => {
-        this.refreshTick.update((n) => n + 1);
-      }),
-    );
   }
 
   // --- v2 control plane ---------------------------------------------------

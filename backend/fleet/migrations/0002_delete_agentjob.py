@@ -10,13 +10,25 @@ def delete_synthetic_containers(apps, schema_editor):
 
 
 class Migration(migrations.Migration):
+    # This migration used to depend on ("rollouts", "0002_delete_rollout_models"),
+    # which removed the RolloutStep -> AgentJob foreign key before AgentJob was
+    # dropped. The rollouts app no longer exists, so the v1 rollout tables (the
+    # only ones referencing fleet_agentjob) are dropped here directly instead.
+    # IF EXISTS keeps this a no-op on fresh databases and on databases where
+    # rollouts.0002 already removed them.
 
     dependencies = [
         ("fleet", "0001_initial"),
-        ("rollouts", "0002_delete_rollout_models"),
     ]
 
     operations = [
+        migrations.RunSQL(
+            [
+                "DROP TABLE IF EXISTS rollouts_rolloutstep",
+                "DROP TABLE IF EXISTS rollouts_rolloutplan",
+            ],
+            reverse_sql=migrations.RunSQL.noop,
+        ),
         migrations.RunPython(delete_synthetic_containers, migrations.RunPython.noop),
         migrations.DeleteModel(
             name="AgentJob",

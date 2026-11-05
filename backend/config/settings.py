@@ -21,9 +21,6 @@ INSTALLED_APPS = [
     "triage",
     "research",
     "controlplane",
-    "catalog",
-    "rollouts",
-    "alerts",
 ]
 
 MIDDLEWARE = [

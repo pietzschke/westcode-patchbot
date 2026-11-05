@@ -51,7 +51,7 @@ function me(isAdmin: boolean): MeDto {
     is_admin: isAdmin, is_default_infra_owner: false };
 }
 
-function setup(isAdmin = true) {
+function setup(isAdmin = true, list: HostDto[] = hosts()) {
   TestBed.configureTestingModule({
     imports: [HostsPage],
     providers: [provideHttpClient(), provideHttpClientTesting()],
@@ -60,7 +60,7 @@ function setup(isAdmin = true) {
   const http = TestBed.inject(HttpTestingController);
   const fixture = TestBed.createComponent(HostsPage);
   fixture.detectChanges();
-  http.expectOne('/api/hosts/').flush(hosts());
+  http.expectOne('/api/hosts/').flush(list);
   fixture.detectChanges();
   return { fixture, http, el: fixture.nativeElement as HTMLElement };
 }
@@ -136,6 +136,14 @@ describe('HostsPage (v2)', () => {
     row(el, 'web').click();
     fixture.detectChanges();
     expect(el.querySelector('.install-command')).toBeNull();
+  });
+
+  it('marks end-of-life operating systems with an EOL badge only on the affected host', () => {
+    const list = hosts();
+    list[1] = { ...list[1], os_version: '20.04', os_eol_date: '2025-05-31', is_os_eol: true };
+    const { el } = setup(true, list);
+    expect(row(el, 'web').querySelector('.badge-eol')?.textContent).toContain('EOL');
+    expect(row(el, 'mdb').querySelector('.badge-eol')).toBeNull();
   });
 
   it('hides the agent token generator from non-admins', () => {

@@ -123,29 +123,6 @@ body {
   gap: 0.45rem;
 }
 
-.dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  display: inline-block;
-}
-
-.dot.ok {
-  background: var(--success);
-}
-
-.dot.crit {
-  background: var(--salmon-700);
-}
-
-.dot.hint {
-  background: var(--status-hint);
-}
-
-.dot.blue {
-  background: var(--bluefly-400);
-}
-
 .page {
   max-width: 76rem;
   margin: 0 auto;
@@ -212,103 +189,6 @@ body {
   list-style: none;
   margin: 0;
   padding: 0;
-}
-
-.service-row {
-  display: grid;
-  grid-template-columns: 40px 1fr 9.5rem 8.5rem 24px;
-  align-items: center;
-  gap: 1rem;
-  min-height: 64px;
-  padding: 0.65rem 0.6rem;
-  border-bottom: 1px solid var(--neutral-200);
-  cursor: pointer;
-  transition: background-color 150ms cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.service-row:hover,
-.service-row.selected {
-  background: var(--bluefly-50);
-}
-
-.svc-logo {
-  width: 40px;
-  height: 40px;
-  border-radius: 8px;
-  background: var(--neutral-50);
-  border: 1px solid var(--neutral-200);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.service-row.selected .svc-logo {
-  background: var(--paper);
-  border-color: var(--bluefly-100);
-}
-
-.svc-main {
-  min-width: 0;
-}
-
-.svc-title {
-  font-weight: 700;
-  color: var(--ink);
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.svc-sub {
-  font-size: 0.8125rem;
-  color: var(--neutral-600);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.svc-sub .crit-text {
-  color: var(--salmon-700);
-  font-weight: 700;
-}
-
-.svc-version {
-  font-size: 0.8125rem;
-  font-variant-numeric: tabular-nums;
-  color: var(--neutral-700);
-  text-align: right;
-}
-
-.svc-version .old {
-  color: var(--neutral-500);
-}
-
-.svc-version .new {
-  font-weight: 700;
-  color: var(--ink);
-}
-
-.svc-scope {
-  font-size: 0.8125rem;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-  color: var(--neutral-600);
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 0.4rem;
-}
-
-.svc-chevron {
-  color: var(--neutral-500);
-  font-weight: 700;
-  text-align: right;
-}
-
-.service-row:hover .svc-chevron,
-.service-row.selected .svc-chevron {
-  color: var(--bluefly-500);
 }
 
 .plan-stripe-wrap,

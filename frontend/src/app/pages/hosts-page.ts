@@ -1,4 +1,4 @@
-import { Component, OnInit, computed, effect, inject, signal } from '@angular/core';
+import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { HttpErrorResponse } from '@angular/common/http';
 import { AuthService } from '../core/auth';
 import { HostContainerDto, HostDto, PatchbotApi } from '../core/patchbot-api';
@@ -231,14 +231,6 @@ export class HostsPage implements OnInit {
     const name = this.selectedHostname();
     return list.find((h) => h.hostname === name) ?? list[0] ?? null;
   });
-
-  constructor() {
-    effect(() => {
-      if (this.api.refreshTick() > 0) {
-        this.loadHosts();
-      }
-    });
-  }
 
   ngOnInit(): void {
     this.loadHosts();

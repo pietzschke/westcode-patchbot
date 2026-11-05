@@ -1,5 +1,8 @@
 import importlib.util
+from io import StringIO
+
 import pytest
+from django.core.management import call_command
 from django.urls import Resolver404, resolve
 
 
@@ -26,19 +29,22 @@ def test_v1_mutation_endpoints_are_gone(path):
         resolve(path)
 
 
-def test_v1_mutation_modules_are_gone():
-    assert not _module_exists("rollouts.orchestrator")
-    assert not _module_exists("alerts.router")
+@pytest.mark.parametrize("module", ["rollouts", "alerts", "catalog", "catalog.live_sync"])
+def test_v1_mutation_modules_are_gone(module):
+    assert not _module_exists(module)
 
 
 @pytest.mark.django_db
-def test_live_sync_never_fabricates_containers(tmp_path):
-    from catalog.live_sync import WESTCODE_SERVICE_DEPLOYMENTS, run_live_sync
+def test_infra_host_import_never_fabricates_containers(tmp_path):
     from fleet.models import Host, HostContainer
 
-    slug = WESTCODE_SERVICE_DEPLOYMENTS[0]["hosts"][0]
-    Host.objects.create(slug=slug, hostname=f"{slug}.westcode.de", provider="hetzner", stack_name=f"hetzner-{slug}")
+    stack = tmp_path / "stacks" / "hetzner-mdb"
+    stack.mkdir(parents=True)
+    (stack / "servers.tf").write_text(
+        'resource "hcloud_server" "mdb" {\n  name  = "mdb.westcode.de"\n  image = "ubuntu-24.04"\n}\n'
+    )
 
-    run_live_sync(projects_root=tmp_path, run_trivy=False, run_gh=False)
+    call_command("sync_infra_hosts", str(tmp_path), stdout=StringIO())
 
+    assert Host.objects.get().hostname == "mdb.westcode.de"
     assert HostContainer.objects.count() == 0

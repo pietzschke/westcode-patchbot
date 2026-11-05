@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 
 BOT_LOGINS = {"renovate[bot]", "dependabot[bot]"}
-_DEPENDABOT_RE = re.compile(r"\bbump\s+(?P<dep>\S+)\s+from\s+\S+\s+to\s+v?(?P<ver>[^\s]+)", re.IGNORECASE)
+_DEPENDABOT_RE = re.compile(r"\bbump\s+(?P<dep>\S+)\s+from\s+v?(?P<from>\S+)\s+to\s+v?(?P<ver>[^\s]+)", re.IGNORECASE)
 _RENOVATE_RE = re.compile(
     r"\b(?:update|bump)\s+(?:dependency\s+|docker\s+image\s+|module\s+)?(?P<dep>\S+)\s+to\s+v?(?P<ver>[^\s]+)",
     re.IGNORECASE,
@@ -21,6 +21,7 @@ class BotPr:
     package: str
     version: str
     draft: bool
+    from_version: str = ""
 
 
 def parse_bot_pr(pr: dict) -> BotPr | None:
@@ -37,4 +38,5 @@ def parse_bot_pr(pr: dict) -> BotPr | None:
         package=match.group("dep").strip(),
         version=match.group("ver").strip().rstrip(".,)"),
         draft=bool(pr.get("draft")),
+        from_version=(match.groupdict().get("from") or "").strip(),
     )

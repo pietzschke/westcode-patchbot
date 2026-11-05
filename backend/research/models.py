@@ -56,3 +56,23 @@ class TriageAnalysisCache(models.Model):
     cache_key = models.CharField(max_length=64, unique=True)
     result_json = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+class MaintenanceUpdate(models.Model):
+    """Open Renovate/Dependabot PR without a known CVE (quiet list, no DMs, no deadlines)."""
+
+    project = models.ForeignKey("inventory.Project", on_delete=models.CASCADE, related_name="maintenance_updates")
+    repository = models.ForeignKey("inventory.RepositoryAsset", on_delete=models.CASCADE, related_name="maintenance_updates")
+    package_name = models.CharField(max_length=255)
+    current_version = models.CharField(max_length=128, blank=True, default="")
+    target_version = models.CharField(max_length=128, blank=True, default="")
+    update_type = models.CharField(max_length=16, default="UNKNOWN")  # PATCH | MINOR | MAJOR | UNKNOWN
+    pr_number = models.IntegerField()
+    pr_url = models.URLField(max_length=512, blank=True, default="")
+    ci_status = models.CharField(max_length=16, blank=True, default="")
+    summary_de = models.TextField(blank=True, default="")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["package_name"]
+        constraints = [models.UniqueConstraint(fields=["repository", "pr_number"], name="uniq_maintenance_pr")]

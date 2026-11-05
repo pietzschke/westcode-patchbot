@@ -543,3 +543,22 @@ body {
 .detail-col { position: sticky; top: 1.5rem; }
 .user-badge { font-size: 0.75rem; font-weight: 600; padding: 4px 8px; border-radius: 999px; background: var(--neutral-100); }
 .scan-status { font-size: 0.75rem; color: var(--neutral-600); }
+
+/* v2 finding detail panel */
+.state-label { font-weight: 600; }
+.action-links { display: flex; gap: 1rem; margin: 0.6rem 0 0.85rem; }
+.action-error { color: var(--salmon-700); font-size: 0.8125rem; margin: 0 0 0.6rem; }
+.dialog-block select, .dialog-block textarea {
+  width: 100%; font: inherit; font-size: 0.8125rem; padding: 6px 8px; margin-bottom: 0.6rem;
+  border: 1px solid var(--neutral-300); border-radius: 4px; background: var(--paper);
+}
+.detail-text { font-size: 0.8125rem; margin: 0.5rem 0; }
+.deployment-hint { font-size: 0.8125rem; border-left: 4px solid var(--status-hint); }
+.proof-badge[data-proof='REVISION'], .proof-badge[data-proof='CHECKOUT'], .proof-badge[data-proof='SCAN'] {
+  background: var(--success-soft); color: var(--success);
+}
+.events { list-style: none; margin: 0; padding: 0; }
+.event { display: flex; flex-direction: column; padding: 0.4rem 0; border-top: 1px solid var(--neutral-100); font-size: 0.8125rem; }
+.event:first-child { border-top: 0; }
+.runbook { background: var(--neutral-900, #1a1a1c); color: #fff; padding: 10px; border-radius: 6px; font-size: 11px; overflow-x: auto; }
+.crit { color: var(--salmon-700); }

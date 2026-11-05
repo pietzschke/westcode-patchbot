@@ -180,3 +180,8 @@ class Job(models.Model):
     class Meta:
         ordering = ["run_after", "id"]
         indexes = [models.Index(fields=["status", "run_after"])]
+
+
+class ScheduleState(models.Model):
+    kind = models.CharField(max_length=32, primary_key=True)
+    last_run_at = models.DateTimeField()

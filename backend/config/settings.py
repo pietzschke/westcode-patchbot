@@ -20,6 +20,7 @@ INSTALLED_APPS = [
     "inventory",
     "triage",
     "research",
+    "controlplane",
     "catalog",
     "rollouts",
     "alerts",
@@ -124,3 +125,9 @@ PATCHBOT_BASE_URL = os.environ.get("PATCHBOT_BASE_URL", "").rstrip("/")
 # --- Public webhooks (decision D-1) ---
 SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET", "")
 GITHUB_WEBHOOK_SECRET = os.environ.get("GITHUB_WEBHOOK_SECRET", "")
+
+# --- Worker wiring ---
+GITHUB_APP_ID = os.environ.get("GITHUB_APP_ID", "")
+GITHUB_APP_INSTALLATION_ID = os.environ.get("GITHUB_APP_INSTALLATION_ID", "")
+GITHUB_APP_PRIVATE_KEY_PATH = os.environ.get("GITHUB_APP_PRIVATE_KEY_PATH", "")
+PATCHBOT_AI_PATCHING = os.environ.get("PATCHBOT_AI_PATCHING", "false").lower() == "true"

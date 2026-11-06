@@ -1,30 +1,24 @@
-from django.urls import URLPattern, URLResolver, path
-from fleet.api import AgentJobResultView, AgentNextJobView, AgentReportView
-from rollouts.api import (
-    HostDetailView,
-    HostListView,
-    HostTokenGenerateView,
-    LiveSyncView,
-    ProjectListView,
-    RolloutPlanDetailView,
-    RolloutPlanExecuteView,
-    RolloutPlanListView,
-    ServiceListView,
-    ServicePlanCreateView,
-)
+from django.conf import settings
+from django.urls import URLPattern, URLResolver, include, path
+from fleet.api import AgentReportView
+from fleet.views import HostDetailView, HostListView, HostTokenGenerateView
+from inventory.views_auth import DevLoginView, HealthView, LogoutView, MeView, entra_callback, entra_login
+from triage.webhooks import github_webhook, slack_interactions
 
 urlpatterns: list[URLPattern | URLResolver] = [
+    path("api/health/", HealthView.as_view(), name="health"),
+    path("api/auth/me/", MeView.as_view(), name="auth-me"),
+    path("api/auth/logout/", LogoutView.as_view(), name="auth-logout"),
+    path("api/auth/entra/login/", entra_login, name="auth-entra-login"),
+    path("api/auth/entra/callback/", entra_callback, name="auth-entra-callback"),
     path("api/agent/report/", AgentReportView.as_view(), name="agent-report"),
-    path("api/agent/jobs/next/", AgentNextJobView.as_view(), name="agent-next-job"),
-    path("api/agent/jobs/<uuid:job_id>/result/", AgentJobResultView.as_view(), name="agent-job-result"),
-    path("api/sync/", LiveSyncView.as_view(), name="live-sync"),
-    path("api/projects/", ProjectListView.as_view(), name="project-list"),
-    path("api/services/", ServiceListView.as_view(), name="service-list"),
-    path("api/services/<slug:slug>/plan/", ServicePlanCreateView.as_view(), name="service-plan-create"),
-    path("api/plans/", RolloutPlanListView.as_view(), name="rollout-plan-list"),
-    path("api/plans/<uuid:plan_id>/", RolloutPlanDetailView.as_view(), name="rollout-plan-detail"),
-    path("api/plans/<uuid:plan_id>/execute/", RolloutPlanExecuteView.as_view(), name="rollout-plan-execute"),
+    path("api/", include("controlplane.urls")),
+    path("api/webhooks/slack/interactions/", slack_interactions, name="webhook-slack"),
+    path("api/webhooks/github/", github_webhook, name="webhook-github"),
     path("api/hosts/", HostListView.as_view(), name="host-list"),
     path("api/hosts/<slug:slug>/", HostDetailView.as_view(), name="host-detail"),
     path("api/hosts/<slug:slug>/token/", HostTokenGenerateView.as_view(), name="host-token-generate"),
 ]
+
+if settings.PATCHBOT_DEV_LOGIN_ENABLED:
+    urlpatterns.append(path("api/auth/dev-login/", DevLoginView.as_view(), name="auth-dev-login"))

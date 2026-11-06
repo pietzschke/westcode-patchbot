@@ -11,9 +11,13 @@ dependencies = [
     "requests>=2.32",
     "pytest>=8",
     "pytest-django>=4.9",
+    "pyjwt[crypto]>=2.9",
+    "holidays>=0.60",
+    "anthropic>=2.5.0",
+    "gunicorn>=23",
 ]
 
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "config.settings_test"
-pythonpath = ["."]
-testpaths = ["fleet/tests", "catalog/tests", "rollouts/tests", "alerts/tests", "../agent/tests"]
+pythonpath = [".", ".."]
+testpaths = ["fleet/tests", "inventory/tests", "triage/tests", "research/tests", "controlplane/tests", "../agent/tests"]

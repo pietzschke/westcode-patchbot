@@ -1,0 +1,4 @@
+# Server-side secrets, never committed (see .env.example and the rollout runbook).
+.env
+renovate.env
+secrets/

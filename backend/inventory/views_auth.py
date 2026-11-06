@@ -6,6 +6,7 @@ from django.conf import settings
 from django.contrib.auth import get_user_model, login, logout
 from django.http import HttpRequest, HttpResponse, HttpResponseRedirect
 from django.utils.decorators import method_decorator
+from django.utils.html import format_html, format_html_join
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET
 from rest_framework import status
@@ -77,7 +78,34 @@ class DevLoginView(APIView):
             member.user = get_user_model().objects.create_user(username=member.email, email=member.email)
             member.save(update_fields=["user"])
         login(request, member.user)
+        form_types = ("application/x-www-form-urlencoded", "multipart/form-data")
+        if request.content_type.split(";")[0].strip() in form_types:  # the dev login page's form
+            return HttpResponseRedirect(settings.LOGIN_REDIRECT_URL)
         return Response(serialize_me(member))
+
+
+def _dev_login_page() -> HttpResponse:
+    """Stand-in for the Entra redirect in local development (DEBUG + PATCHBOT_DEV_LOGIN=1 only)."""
+    buttons = format_html_join(
+        "\n",
+        '<button name="email" value="{}">{} <small>{}{}</small></button>',
+        (
+            (m.email, m.name, m.email, " · Admin" if m.is_admin else "")
+            for m in TeamMember.objects.filter(is_active=True).order_by("-is_admin", "name")
+        ),
+    )
+    body = format_html(
+        """<!doctype html><html lang="de"><head><meta charset="utf-8"><title>Patchbot – Dev-Login</title>
+<style>body{{font:15px system-ui,sans-serif;max-width:28rem;margin:4rem auto;padding:0 1rem;color:#111}}
+p{{color:#555}}button{{display:block;width:100%;text-align:left;margin:.4rem 0;padding:.7rem .9rem;font:inherit;
+border:1px solid #ccc;border-radius:6px;background:#fff;cursor:pointer}}button:hover{{background:#eef}}
+small{{color:#666;margin-left:.4rem}}</style></head><body>
+<h1>Dev-Login</h1><p>Entra ID ist lokal nicht konfiguriert. Nur mit DEBUG und PATCHBOT_DEV_LOGIN=1 sichtbar.</p>
+<form method="post" action="/api/auth/dev-login/">{}</form>{}</body></html>""",
+        buttons,
+        "" if buttons else format_html("<p>Keine aktiven Teammitglieder – erst <code>manage.py seed_dev</code>.</p>"),
+    )
+    return HttpResponse(body)
 
 
 def _redirect_uri(request: HttpRequest) -> str:
@@ -87,6 +115,8 @@ def _redirect_uri(request: HttpRequest) -> str:
 @require_GET
 def entra_login(request: HttpRequest) -> HttpResponse:
     if not (settings.MICROSOFT_TENANT_ID and settings.MICROSOFT_CLIENT_ID):
+        if settings.PATCHBOT_DEV_LOGIN_ENABLED:
+            return _dev_login_page()
         return HttpResponse("Entra ID login is not configured.", status=503)
     url = build_authorization_url(
         request.session,

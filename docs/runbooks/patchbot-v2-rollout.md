@@ -685,9 +685,10 @@ uv run python manage.py runserver 127.0.0.1:8020
 cd frontend && npm ci && npx ng serve
 ```
 
-Anmelden: in der Browser-Konsole auf `http://localhost:4200`
-`fetch('/api/auth/dev-login/', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({email: 'dev@westcode.de'})})`
-und neu laden.
+Anmelden: `http://localhost:4200` öffnen. Ohne Entra-Konfiguration leitet der Login auf eine Dev-Login-Seite
+mit allen aktiven Teammitgliedern weiter (nur mit `DJANGO_DEBUG=true` und `PATCHBOT_DEV_LOGIN=1`); Person anklicken.
+`seed_dev` legt u. a. `dev@westcode.de` (Admin) an. Die Demo-Agents gelten 60 Minuten als frisch – danach
+`seed_dev` erneut ausführen, sonst steht die Ampel auf Grau.
 
 Tests: `cd backend && uv run pytest -q` (ohne `DJANGO_DEBUG`). Einzelne Worker-Runde: `uv run python manage.py
 run_worker --once` (braucht GitHub-App-Konfiguration).

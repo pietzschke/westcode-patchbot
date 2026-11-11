@@ -95,9 +95,12 @@ def test_renovate_pilot_config_and_workflow():
     assert dry_run_input["default"] == "full"
 
     steps = workflow["jobs"]["renovate"]["steps"]
-    token_step = next(s for s in steps if str(s.get("uses", "")).startswith("actions/create-github-app-token@v2"))
+    checkout_step = next(s for s in steps if str(s.get("uses", "")).startswith("actions/checkout@"))
+    assert checkout_step["uses"] == "actions/checkout@v6"
+
+    token_step = next(s for s in steps if str(s.get("uses", "")).startswith("actions/create-github-app-token@v3"))
     assert token_step["with"]["owner"] == "westcoder"
-    assert "RENOVATE_APP_ID" in token_step["with"]["app-id"]
+    assert "RENOVATE_APP_ID" in token_step["with"]["client-id"]
     assert "RENOVATE_APP_PRIVATE_KEY" in token_step["with"]["private-key"]
 
     dry_run_step = next(s for s in steps if "RENOVATE_DRY_RUN" in str(s.get("run", "")))

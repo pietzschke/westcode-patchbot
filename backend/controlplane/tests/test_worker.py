@@ -14,6 +14,11 @@ BER = ZoneInfo("Europe/Berlin")
 NOW = datetime(2026, 11, 9, 7, 0, tzinfo=BER)
 
 
+@pytest.fixture(autouse=True)
+def _freeze_clock(monkeypatch):
+    monkeypatch.setattr("django.utils.timezone.now", lambda: NOW)
+
+
 def deps(**handlers):
     return Deps(github=FakeGitHub(), slack=FakeSlack(), llm=None, trivy=None, bumper=None, worktrees=None,
                 patcher=None, handlers=handlers)

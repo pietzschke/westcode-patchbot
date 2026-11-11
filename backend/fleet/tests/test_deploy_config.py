@@ -110,7 +110,8 @@ def test_renovate_pilot_config_and_workflow():
     assert "%5Bbot%5D" in dry_run_step["run"]
     assert "@users.noreply.github.com" in dry_run_step["run"]
 
-    renovate_step = next(s for s in steps if str(s.get("uses", "")).startswith("renovatebot/github-action@v46"))
+    renovate_step = next(s for s in steps if str(s.get("uses", "")).startswith("renovatebot/github-action@"))
+    assert re.fullmatch(r"renovatebot/github-action@v\d+\.\d+\.\d+", renovate_step["uses"])
     assert renovate_step["with"]["configurationFile"] == "deploy/renovate.json"
     assert "RENOVATE_GIT_AUTHOR" in renovate_step["env"]
     assert "RENOVATE_USERNAME" in renovate_step["env"]

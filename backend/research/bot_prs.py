@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-BOT_LOGINS = {"renovate[bot]", "dependabot[bot]"}
+BOT_LOGINS = {"renovate[bot]", "westcode-renovate[bot]", "dependabot[bot]"}
 _DEPENDABOT_RE = re.compile(r"\bbump\s+(?P<dep>\S+)\s+from\s+v?(?P<from>\S+)\s+to\s+v?(?P<ver>[^\s]+)", re.IGNORECASE)
 _RENOVATE_RE = re.compile(
     r"\b(?:update|bump)\s+(?:dependency\s+|docker\s+image\s+|module\s+)?(?P<dep>\S+)\s+to\s+v?(?P<ver>[^\s]+)",

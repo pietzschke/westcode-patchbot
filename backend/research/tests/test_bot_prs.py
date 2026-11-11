@@ -15,6 +15,8 @@ def pr(title, login="renovate[bot]"):
         ("chore(deps): update docker image postgres to v18.2", "renovate[bot]", "postgres", "18.2"),
         ("Bump lodash from 4.17.15 to 4.17.21", "dependabot[bot]", "lodash", "4.17.21"),
         ("Bump django from 5.2.1 to 5.2.8 in /backend", "dependabot[bot]", "django", "5.2.8"),
+        ("fix(deps): update dependency django to v6.0.2", "westcode-renovate[bot]", "django", "6.0.2"),
+        ("chore(deps): update dependency @angular/core to v22.2.1", "westcode-renovate[bot]", "@angular/core", "22.2.1"),
     ],
 )
 def test_parses_renovate_and_dependabot_titles(title, login, package, version):
@@ -25,3 +27,4 @@ def test_parses_renovate_and_dependabot_titles(title, login, package, version):
 def test_ignores_human_prs_and_group_updates():
     assert parse_bot_pr(pr("Update dependency lodash to v4.17.21", login="moritz")) is None
     assert parse_bot_pr(pr("Update all non-major dependencies")) is None
+    assert parse_bot_pr(pr("chore(deps): update non-major dependencies", login="westcode-renovate[bot]")) is None

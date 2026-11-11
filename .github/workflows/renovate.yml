@@ -1,0 +1,94 @@
+name: Renovate
+
+"on":
+  schedule:
+    # Mo–Do 02:00 UTC (nach ack-desk nightly-merge-back um 01:00 UTC): Sammel-PR erstellen/aktualisieren.
+    - cron: "0 2 * * 1-4"
+    # Mo–Do 03:00 UTC: grünen Sammel-PR nach abgeschlossenen CircleCI-Checks automatisch mergen.
+    - cron: "0 3 * * 1-4"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry-run mode ('full' previews planned PRs in logs; 'off' creates/merges PRs)"
+        required: false
+        type: choice
+        options:
+          - "full"
+          - "lookup"
+          - "off"
+        default: "full"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: renovate
+  cancel-in-progress: false
+
+jobs:
+  renovate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout configuration
+        uses: actions/checkout@v4
+
+      - name: Mint GitHub App installation token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.RENOVATE_APP_ID }}
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+          owner: westcoder
+
+      - name: Configure Renovate bot identity and optional dry-run
+        id: bot-env
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          DRY_RUN_MODE: ${{ github.event_name == 'workflow_dispatch' && (inputs.dry_run == 'full' || inputs.dry_run == 'lookup') && inputs.dry_run || '' }}
+        run: |
+          set -euo pipefail
+          BOT_ID="$(gh api "users/${APP_SLUG}%5Bbot%5D" --jq .id)"
+          test -n "${BOT_ID}"
+          echo "git_author=${APP_SLUG}[bot] <${BOT_ID}+${APP_SLUG}[bot]@users.noreply.github.com>" >> "$GITHUB_OUTPUT"
+          if [ -n "${DRY_RUN_MODE}" ]; then
+            echo "RENOVATE_DRY_RUN=${DRY_RUN_MODE}" >> "$GITHUB_ENV"
+          fi
+
+      # Phase 2 (19 CodeArtifact-Projekte in AWS-Konto 069962555850):
+      # Oben `id-token: write` unter `permissions` ergänzen und diesen Block aktivieren
+      # (Rolle mit Permission Boundary `codeartifact-read-boundary` aus westcode-infra):
+      #
+      # - name: Configure AWS credentials via OIDC
+      #   uses: aws-actions/configure-aws-credentials@v4
+      #   with:
+      #     role-to-assume: arn:aws:iam::069962555850:role/github-renovate-codeartifact-read
+      #     aws-region: eu-central-1
+      #
+      # - name: Mint short-lived AWS CodeArtifact token for Renovate
+      #   run: |
+      #     set -euo pipefail
+      #     TOKEN="$(aws codeartifact get-authorization-token \
+      #       --domain westcode \
+      #       --domain-owner 069962555850 \
+      #       --query authorizationToken \
+      #       --output text)"
+      #     echo "::add-mask::${TOKEN}"
+      #     HOST_RULES="$(jq -cn --arg pw "${TOKEN}" '[{
+      #       matchHost: "westcode-069962555850.d.codeartifact.eu-central-1.amazonaws.com",
+      #       hostType: "pypi",
+      #       username: "aws",
+      #       password: $pw
+      #     }]')"
+      #     echo "RENOVATE_HOST_RULES=${HOST_RULES}" >> "$GITHUB_ENV"
+
+      - name: Run Renovate
+        uses: renovatebot/github-action@v46
+        with:
+          configurationFile: deploy/renovate.json
+          token: ${{ steps.app-token.outputs.token }}
+        env:
+          LOG_LEVEL: info
+          RENOVATE_USERNAME: "${{ steps.app-token.outputs.app-slug }}[bot]"
+          RENOVATE_GIT_AUTHOR: ${{ steps.bot-env.outputs.git_author }}

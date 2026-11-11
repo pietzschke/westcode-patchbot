@@ -183,27 +183,6 @@ services:
       - default
       - patchbot-sandbox-egress
 
-  # Self-hosted Renovate runner from v1, unchanged in behaviour. It gets its own env file so it no
-  # longer sees the Patchbot secrets in .env.
-  renovate:
-    <<: *hardened
-    image: renovate/renovate:latest
-    env_file: renovate.env
-    environment:
-      RENOVATE_CONFIG_FILE: /usr/src/app/renovate.json
-      RENOVATE_PLATFORM: github
-      AWS_REGION: eu-central-1
-      AWS_DEFAULT_REGION: eu-central-1
-      CODEARTIFACT_DOMAIN: westcode
-    volumes:
-      - ./renovate.json:/usr/src/app/renovate.json:ro
-    entrypoint:
-      [
-        "/bin/sh",
-        "-c",
-        "trap exit TERM; while :; do renovate; sleep 6h & wait $${!}; done",
-      ]
-
 secrets:
   github_app_private_key:
     # Owned by uid 1000, mode 0400 (the worker runs as 1000:1000).

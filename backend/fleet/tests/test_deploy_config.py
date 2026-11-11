@@ -37,6 +37,7 @@ def test_deploy_compose_is_hardened_and_renovate_config_valid():
         assert "no-new-privileges:true" in service["security_opt"], name
 
     assert services["postgres"]["user"] == "postgres"
+    assert "renovate" not in services
     for name in ("web", "worker"):
         env = _env_keys(services[name])
         for key in ("POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_HOST", "POSTGRES_PORT"):
@@ -45,11 +46,79 @@ def test_deploy_compose_is_hardened_and_renovate_config_valid():
         # Least privilege: explicit per-service environment instead of the shared .env file.
         assert "env_file" not in services[name], name
 
-    renovate = json.loads((REPO_ROOT / "deploy" / "renovate.json").read_text(encoding="utf-8"))
-    for manager in ("poetry", "npm", "dockerfile", "docker-compose", "github-actions", "circleci"):
-        assert manager in renovate["enabledManagers"]
-    assert "hostRules" in renovate and len(renovate["hostRules"]) >= 1
-    assert "packageRules" in renovate and len(renovate["packageRules"]) >= 1
+
+def test_renovate_pilot_config_and_workflow():
+    renovate_path = REPO_ROOT / "deploy" / "renovate.json"
+    workflow_path = REPO_ROOT / ".github" / "workflows" / "renovate.yml"
+    runbook_path = REPO_ROOT / "docs" / "runbooks" / "patchbot-v2-rollout.md"
+
+    renovate_text = renovate_path.read_text(encoding="utf-8")
+    renovate = json.loads(renovate_text)
+    assert renovate["$schema"] == "https://docs.renovatebot.com/renovate-global-schema.json"
+    assert renovate["platform"] == "github"
+    assert renovate["onboarding"] is False
+    assert renovate["requireConfig"] == "optional"
+    assert renovate["includeForks"] is True
+    assert renovate["semanticCommits"] == "enabled"
+    assert renovate["osvVulnerabilityAlerts"] is True
+    for manager in ("poetry", "pep621", "npm", "dockerfile", "docker-compose", "github-actions", "circleci"):
+        assert manager in renovate["enabledManagers"], manager
+    assert renovate["repositories"] == [{"repository": "westcoder/ack-desk", "baseBranchPatterns": ["develop"]}]
+
+    vuln_alerts = renovate["vulnerabilityAlerts"]
+    assert vuln_alerts["enabled"] is True
+    assert vuln_alerts["groupName"] is None
+    assert vuln_alerts["automerge"] is False
+
+    non_major = next(r for r in renovate["packageRules"] if r.get("groupSlug") == "non-major")
+    assert set(non_major["matchUpdateTypes"]) >= {"minor", "patch", "pin", "digest"}
+    assert non_major["automerge"] is True
+    assert non_major["platformAutomerge"] is False
+    assert non_major["ignoreTests"] is False
+
+    major = next(r for r in renovate["packageRules"] if r.get("matchUpdateTypes") == ["major"])
+    assert major["groupName"] is None
+    assert major["automerge"] is False
+    assert major["rebaseWhen"] == "conflicted"
+
+    assert workflow_path.is_file()
+    workflow_text = workflow_path.read_text(encoding="utf-8")
+    workflow = yaml.safe_load(workflow_text)
+    assert workflow["permissions"] == {"contents": "read"}
+
+    crons = [entry["cron"] for entry in workflow["on"]["schedule"]]
+    assert crons == ["0 2 * * 1-4", "0 3 * * 1-4"]
+    assert all(c.split()[4] == "1-4" for c in crons)
+
+    dry_run_input = workflow["on"]["workflow_dispatch"]["inputs"]["dry_run"]
+    assert dry_run_input["options"] == ["full", "lookup", "off"]
+    assert dry_run_input["default"] == "full"
+
+    steps = workflow["jobs"]["renovate"]["steps"]
+    token_step = next(s for s in steps if str(s.get("uses", "")).startswith("actions/create-github-app-token@v2"))
+    assert token_step["with"]["owner"] == "westcoder"
+    assert "RENOVATE_APP_ID" in token_step["with"]["app-id"]
+    assert "RENOVATE_APP_PRIVATE_KEY" in token_step["with"]["private-key"]
+
+    dry_run_step = next(s for s in steps if "RENOVATE_DRY_RUN" in str(s.get("run", "")))
+    assert "RENOVATE_DRY_RUN=false" not in dry_run_step["run"]
+    assert "${{" not in dry_run_step["run"]
+    dry_run_expr = dry_run_step["env"]["DRY_RUN_MODE"]
+    assert "github.event_name == 'workflow_dispatch'" in dry_run_expr
+    assert "inputs.dry_run == 'full'" in dry_run_expr
+    assert "inputs.dry_run == 'lookup'" in dry_run_expr
+    assert "%5Bbot%5D" in dry_run_step["run"]
+    assert "@users.noreply.github.com" in dry_run_step["run"]
+
+    renovate_step = next(s for s in steps if str(s.get("uses", "")).startswith("renovatebot/github-action@v46"))
+    assert renovate_step["with"]["configurationFile"] == "deploy/renovate.json"
+    assert "RENOVATE_GIT_AUTHOR" in renovate_step["env"]
+    assert "RENOVATE_USERNAME" in renovate_step["env"]
+
+    for path in (renovate_path, workflow_path, runbook_path):
+        assert "533267181938" not in path.read_text(encoding="utf-8"), path.name
+    assert "westcode-069962555850.d.codeartifact.eu-central-1.amazonaws.com" in workflow_text
+    assert "Workflows: **Read and write**" in runbook_path.read_text(encoding="utf-8")
 
 
 def test_compose_has_web_worker_and_isolated_sandbox_network():

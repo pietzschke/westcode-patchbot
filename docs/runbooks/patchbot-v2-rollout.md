@@ -42,7 +42,9 @@ eingerichtet werden müssen und in welcher Reihenfolge der neue Host-Agent auf d
 | `worker` | `python manage.py run_worker`: Scheduler, Job-Queue, Webhook-Verarbeitung, Trivy, git, npm/uv | `default`, `backend` | Repo-Cache unter `/var/lib/patchbot/repo-cache`, GitHub-App-Key als Compose-Secret; Docker-Socket **nur** mit `compose.ai-patching.yaml` |
 | `trivy-db` | aktualisiert alle 6 h die Trivy-DB im Volume `worker-cache` | `default` | gleiches Image wie `worker`; die Scans laufen mit `--skip-db-update` |
 | `egress-proxy` | Squid, einziger Ausgang der Sandbox, nur `registry.npmjs.org`, `*.pypi.org`, `files.pythonhosted.org` (HTTPS) | `default`, `patchbot-sandbox-egress` | `deploy/egress-proxy/squid.conf` |
-| `renovate` | selbst gehosteter Renovate-Runner aus v1 (unverändert) | `default` | eigene Datei `renovate.env`, sieht die Patchbot-Secrets nicht mehr |
+
+Renovate läuft nicht mehr als Dauer-Container im Compose-Stack, sondern geplant per GitHub Actions
+(`.github/workflows/renovate.yml` mit `deploy/renovate.json`, siehe [Abschnitt 6](#6-github-app)).
 
 Netze:
 
@@ -72,7 +74,6 @@ sudo install -d -o 1000 -g 1000 -m 0750 /var/lib/patchbot/repo-cache
 # Secrets
 sudo install -d -m 0700 deploy/secrets
 sudo cp deploy/.env.example deploy/.env && sudo chmod 0600 deploy/.env    # Werte eintragen (Abschnitt 3)
-sudo install -m 0600 /dev/null deploy/renovate.env                        # RENOVATE_TOKEN usw. aus der alten .env
 sudo install -o 1000 -g 1000 -m 0400 <download>.pem deploy/secrets/github-app.pem
 
 # Images bauen (werden nie aus einer Registry gezogen)
@@ -89,7 +90,7 @@ docker build -t patchbot-sandbox:node22    -f deploy/sandbox/Dockerfile.node22  
 docker build -t patchbot-sandbox:python312 -f deploy/sandbox/Dockerfile.python312 deploy/sandbox
 ```
 
-`deploy/.env`, `deploy/renovate.env` und `deploy/secrets/` sind über `deploy/.gitignore` ausgeschlossen.
+`deploy/.env` und `deploy/secrets/` sind über `deploy/.gitignore` ausgeschlossen.
 Die `.env` dient nur der Variablen-Interpolation: jeder Dienst bekommt in `compose.yaml` explizit nur die
 Variablen, die er braucht (kein `env_file: .env` mehr für `web`/`worker`).
 
@@ -131,9 +132,6 @@ Vorlage: `deploy/.env.example`. „Pflicht“ = `docker compose` bricht ohne Wer
 | `PATCHBOT_DEV_LOGIN` | – | – | **nie in Produktion.** Nur lokal zusammen mit `DJANGO_DEBUG=true`; sonst Startabbruch. |
 
 Slack läuft ausschließlich über HTTP-Interaktivität: es gibt **kein `SLACK_APP_TOKEN`** (kein Socket Mode).
-
-`deploy/renovate.env` (nur für den Dienst `renovate`): `RENOVATE_TOKEN`, `CODEARTIFACT_AUTH_TOKEN` und
-gegebenenfalls weitere `RENOVATE_*`-Werte aus der bisherigen `.env`.
 
 ## 4. Reverse Proxy und öffentliche Webhooks (D-1)
 
@@ -380,12 +378,43 @@ Danach:
 Hinweis: Patchbot liest CI-Ergebnisse über die Checks-API. Reporten Projekte ihren CircleCI-Status nur als
 Commit-Status (alte OAuth-Integration), erscheint dort kein CI-Status (siehe [Offene Punkte](#16-offene-punkte)).
 
+### Separate GitHub App für Renovate (`westcode-renovate`)
+
+Renovate läuft zentral über `.github/workflows/renovate.yml` und `deploy/renovate.json` in
+`westcoder/westcode-patchbot` (`Mo–Do` `02:00 UTC` Sammel-PR anlegen/aktualisieren, `03:00 UTC` grünen Sammel-PR
+automergen) – unabhängig vom Patchbot-Server.
+
+1. Org `westcoder` → Settings → Developer settings → GitHub Apps → „New GitHub App“:
+   - **Name:** `westcode-renovate`, **Webhook:** deaktiviert (`Active` aus).
+   - **Repository permissions:**
+     - Contents: **Read and write**
+     - Pull requests: **Read and write**
+     - Issues: **Read and write** (Dependency Dashboard)
+     - Workflows: **Read and write** (erforderlich, damit der Manager `github-actions` Updates an
+       `.github/workflows/*.yml` pushen kann, ohne den Sammel-PR zu blockieren)
+     - Checks: **Read-only** · Commit statuses: **Read-only** · Metadata: **Read-only**
+   - **Where can this app be installed:** „Only on this account“.
+2. App in `westcoder` mit **„Only select repositories“** installieren – Start mit dem Pilot-Repository
+   `westcoder/ack-desk` (und bei aktivem Org-Ruleset `westcode-renovate` auf die Bypass-Liste für `renovate/*`
+   bzw. Automerge auf den Ziel-Branch setzen).
+3. In `westcoder/westcode-patchbot` unter Settings → Secrets and variables → Actions als Repository Secrets
+   hinterlegen:
+   - `RENOVATE_APP_ID`: App ID von `westcode-renovate`
+   - `RENOVATE_APP_PRIVATE_KEY`: erzeugter Private Key (`.pem`-Inhalt)
+4. Workflow und `deploy/renovate.json` müssen auf dem Default-Branch (`main`) von `westcoder/westcode-patchbot`
+   liegen, damit GitHub die `schedule`-Läufe ausführt. Ersttest unter Actions → „Renovate“ → „Run workflow“:
+   zuerst mit `dry_run = full` (prüft Log-Vorschau ohne PR-Erstellung), danach mit `dry_run = off`.
+5. Weitere Projekte ohne CodeArtifact werden durch Freischalten in der App-Installation und Aufnahme in
+   `repositories` in `deploy/renovate.json` ergänzt. Für Phase 2 (die 19 AWS-CodeArtifact-Projekte in Konto
+   `069962555850`) ist der OIDC-Block (`codeartifact-read-boundary`) in `.github/workflows/renovate.yml`
+   vorbereitet.
+
 ## 7. AWS ECR (Leserolle)
 
 Der Worker scannt laufende Images per `trivy image --image-src remote <repo>@<digest>`. Trivy nutzt die
 AWS-Default-Credential-Chain.
 
-IAM-Rolle `patchbot-ecr-read` mit genau dieser Policy (Konto `533267181938`):
+IAM-Rolle `patchbot-ecr-read` mit genau dieser Policy (Konto `069962555850`):
 
 ```json
 {
@@ -395,7 +424,7 @@ IAM-Rolle `patchbot-ecr-read` mit genau dieser Policy (Konto `533267181938`):
     {
       "Effect": "Allow",
       "Action": ["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"],
-      "Resource": "arn:aws:ecr:eu-central-1:533267181938:repository/*"
+      "Resource": "arn:aws:ecr:eu-central-1:069962555850:repository/*"
     }
   ]
 }
@@ -455,7 +484,8 @@ Prüfen: im UI „Projekte & Zuordnung“ → Notion-Sync starten; unbekannte St
 ## 10. Inbetriebnahme und Migration von v1
 
 v1 lief mit den Diensten `db`, `trivy`, `backend`, `renovate`. In v2 heißt die Datenbank `postgres`
-(dasselbe Volume `pgdata`), `backend` wird zu `web` + `worker`, der Trivy-Server entfällt.
+(dasselbe Volume `pgdata`), `backend` wird zu `web` + `worker`, der Trivy-Server entfällt und `renovate`
+läuft per GitHub Actions (`.github/workflows/renovate.yml`).
 
 ```bash
 cd /opt/patchbot
@@ -464,12 +494,13 @@ C="docker compose -f deploy/compose.yaml"
 # 1. Backup der v1-Datenbank (alter Dienstname: db)
 $C exec -T db pg_dump -U patchbot -Fc patchbot > /root/patchbot-v1-$(date +%F).dump
 
-# 2. Code aktualisieren, .env/renovate.env/secrets wie in Abschnitt 2 und 3 anlegen
+# 2. Code aktualisieren, .env und secrets wie in Abschnitt 2 und 3 anlegen
 git fetch && git checkout <v2-release>
 
-# 3. Bauen und starten; --remove-orphans entfernt die alten Container db, backend, trivy
+# 3. Bauen und starten; --remove-orphans entfernt die alten Container db, backend, trivy, renovate
 $C build
 $C up -d --remove-orphans
+sudo rm -f /opt/patchbot/deploy/renovate.env # altes statisches Renovate-Secret aus v1 entfernen
 # Frontend neu bauen (der Reverse Proxy liefert dist/frontend/browser aus, siehe Abschnitt 2)
 docker run --rm -v /opt/patchbot/frontend:/app -w /app node:22-alpine \
   sh -c 'npm ci --no-audit --no-fund && npx ng build'
@@ -701,8 +732,10 @@ run_worker --once` (braucht GitHub-App-Konfiguration).
 - **Reverse Proxy:** nginx oder Caddy; zwei Allowlists pflegen – Egress-IPs der 23 VMs (nur Agent-Endpunkt) und Büro/VPN (UI/API).
 - **Trivy-DB-Aktualisierung:** `research.trivy.update_trivy_db()` wird vom Scheduler noch nicht aufgerufen;
   bis dahin übernimmt der Dienst `trivy-db` die Aktualisierung (alle 6 h).
-- **Renovate:** bleibt als selbst gehosteter Runner im Stack. Falls Renovate org-weit anders betrieben wird
-  (z. B. als GitHub App), kann der Dienst `renovate` samt `renovate.json`/`renovate.env` entfallen.
+- **Renovate:** läuft zentral per GitHub Actions (`.github/workflows/renovate.yml`, GitHub App
+  `westcode-renovate`), zunächst für `westcoder/ack-desk`. Für Phase 2 (die 19 CodeArtifact-Projekte in
+  AWS-Konto `069962555850`) muss noch die OIDC-Leserolle unter `codeartifact-read-boundary` in `westcode-infra`
+  angelegt und der vorbereitete Schritt im Workflow aktiviert werden.
 - **CI-Status über Commit-Statuses:** reporten Projekte nur Commit-Statuses statt Checks, braucht die App
   zusätzlich `Commit statuses: Read` und Patchbot eine Code-Anpassung.
 - **Private Registries (CodeArtifact):** weder Worker-Bumps noch Sandbox haben Registry-Credentials; solche

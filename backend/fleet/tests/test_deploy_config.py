@@ -58,8 +58,12 @@ def test_renovate_pilot_config_and_workflow():
     assert renovate["platform"] == "github"
     assert renovate["onboarding"] is False
     assert renovate["requireConfig"] == "optional"
-    assert renovate["includeForks"] is True
+    assert renovate["forkProcessing"] == "enabled"
+    assert "includeForks" not in renovate
+    assert renovate["globalExtends"] == ["config:recommended"]
+    assert "extends" not in renovate
     assert renovate["semanticCommits"] == "enabled"
+    assert renovate["dependencyDashboard"] == {"enabled": True}
     assert renovate["osvVulnerabilityAlerts"] is True
     for manager in ("poetry", "pep621", "npm", "dockerfile", "docker-compose", "github-actions", "circleci"):
         assert manager in renovate["enabledManagers"], manager
@@ -75,11 +79,17 @@ def test_renovate_pilot_config_and_workflow():
     assert non_major["automerge"] is True
     assert non_major["platformAutomerge"] is False
     assert non_major["ignoreTests"] is False
+    assert non_major["prPriority"] > 0
+    assert non_major["prConcurrentLimit"] >= 10
 
     major = next(r for r in renovate["packageRules"] if r.get("matchUpdateTypes") == ["major"])
-    assert major["groupName"] is None
+    assert "groupName" not in major
     assert major["automerge"] is False
     assert major["rebaseWhen"] == "conflicted"
+    assert major["prConcurrentLimit"] == 2
+    assert major["branchConcurrentLimit"] == 2
+    assert major["prHourlyLimit"] == 1
+    assert major["prPriority"] < 0
 
     assert workflow_path.is_file()
     workflow_text = workflow_path.read_text(encoding="utf-8")

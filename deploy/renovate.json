@@ -3,18 +3,23 @@
   "platform": "github",
   "onboarding": false,
   "requireConfig": "optional",
-  "includeForks": true,
-  "extends": [
+  "forkProcessing": "enabled",
+  "globalExtends": [
     "config:recommended"
   ],
   "timezone": "Europe/Berlin",
   "semanticCommits": "enabled",
-  "dependencyDashboard": true,
+  "dependencyDashboard": {
+    "enabled": true
+  },
   "osvVulnerabilityAlerts": true,
   "vulnerabilityAlerts": {
     "enabled": true,
     "groupName": null,
     "automerge": false,
+    "prConcurrentLimit": 0,
+    "branchConcurrentLimit": 0,
+    "prHourlyLimit": 0,
     "schedule": [
       "at any time"
     ],
@@ -42,7 +47,7 @@
   ],
   "packageRules": [
     {
-      "description": "Group non-major updates into a single nightly PR and automerge after green CI",
+      "description": "Group all non-major updates (including monorepos) into a single nightly PR and automerge after green CI",
       "matchUpdateTypes": [
         "minor",
         "patch",
@@ -53,16 +58,23 @@
       "groupSlug": "non-major",
       "automerge": true,
       "platformAutomerge": false,
-      "ignoreTests": false
+      "ignoreTests": false,
+      "prPriority": 10,
+      "prConcurrentLimit": 10,
+      "branchConcurrentLimit": 10,
+      "prHourlyLimit": 0
     },
     {
-      "description": "Isolate major updates into dedicated PRs without automerge or noisy rebasing",
+      "description": "Throttle major updates to max 2 concurrent PRs/branches and max 1 new PR per run without automerge",
       "matchUpdateTypes": [
         "major"
       ],
-      "groupName": null,
       "automerge": false,
       "rebaseWhen": "conflicted",
+      "prPriority": -5,
+      "prConcurrentLimit": 2,
+      "branchConcurrentLimit": 2,
+      "prHourlyLimit": 1,
       "labels": [
         "dependencies",
         "major-update"

@@ -57,7 +57,7 @@ def test_renovate_pilot_config_and_workflow():
     assert renovate["$schema"] == "https://docs.renovatebot.com/renovate-global-schema.json"
     assert renovate["platform"] == "github"
     assert renovate["onboarding"] is False
-    assert renovate["requireConfig"] == "optional"
+    assert renovate["requireConfig"] == "ignored"
     assert renovate["forkProcessing"] == "enabled"
     assert "includeForks" not in renovate
     assert renovate["globalExtends"] == ["config:recommended"]

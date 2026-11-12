@@ -2,7 +2,7 @@
   "$schema": "https://docs.renovatebot.com/renovate-global-schema.json",
   "platform": "github",
   "onboarding": false,
-  "requireConfig": "optional",
+  "requireConfig": "ignored",
   "forkProcessing": "enabled",
   "globalExtends": [
     "config:recommended"

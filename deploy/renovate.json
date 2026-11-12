@@ -39,6 +39,18 @@
       "baseBranchPatterns": [
         "develop"
       ]
+    },
+    {
+      "repository": "westcoder/westcode-hub",
+      "baseBranchPatterns": [
+        "main"
+      ]
+    },
+    {
+      "repository": "westcoder/projectory",
+      "baseBranchPatterns": [
+        "develop"
+      ]
     }
   ],
   "enabledManagers": [

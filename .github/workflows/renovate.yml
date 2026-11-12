@@ -20,6 +20,7 @@ name: Renovate
 
 permissions:
   contents: read
+  id-token: write
 
 concurrency:
   group: renovate
@@ -56,32 +57,56 @@ jobs:
             echo "RENOVATE_DRY_RUN=${DRY_RUN_MODE}" >> "$GITHUB_ENV"
           fi
 
-      # Phase 2 (19 CodeArtifact-Projekte in AWS-Konto 069962555850):
-      # Oben `id-token: write` unter `permissions` ergänzen und diesen Block aktivieren
-      # (Rolle mit Permission Boundary `codeartifact-read-boundary` aus westcode-infra):
-      #
-      # - name: Configure AWS credentials via OIDC
-      #   uses: aws-actions/configure-aws-credentials@v4
-      #   with:
-      #     role-to-assume: arn:aws:iam::069962555850:role/github-renovate-codeartifact-read
-      #     aws-region: eu-central-1
-      #
-      # - name: Mint short-lived AWS CodeArtifact token for Renovate
-      #   run: |
-      #     set -euo pipefail
-      #     TOKEN="$(aws codeartifact get-authorization-token \
-      #       --domain westcode \
-      #       --domain-owner 069962555850 \
-      #       --query authorizationToken \
-      #       --output text)"
-      #     echo "::add-mask::${TOKEN}"
-      #     HOST_RULES="$(jq -cn --arg pw "${TOKEN}" '[{
-      #       matchHost: "westcode-069962555850.d.codeartifact.eu-central-1.amazonaws.com",
-      #       hostType: "pypi",
-      #       username: "aws",
-      #       password: $pw
-      #     }]')"
-      #     echo "RENOVATE_HOST_RULES=${HOST_RULES}" >> "$GITHUB_ENV"
+      - name: Mint short-lived AWS CodeArtifact token via OIDC
+        env:
+          ROLE_ARN: arn:aws:iam::069962555850:role/westcode-infra/github-renovate-codeartifact-read
+          AWS_DEFAULT_REGION: eu-central-1
+        run: |
+          set -euo pipefail
+          OIDC_TOKEN="$(curl -fsSL \
+            -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com" | jq -r .value)"
+          if ! CREDS="$(aws sts assume-role-with-web-identity \
+            --role-arn "${ROLE_ARN}" \
+            --role-session-name "renovate-${GITHUB_RUN_ID}" \
+            --web-identity-token "${OIDC_TOKEN}" \
+            --duration-seconds 3600 \
+            --query Credentials \
+            --output json 2>&1)"; then
+            echo "::error::Could not assume ${ROLE_ARN}"
+            echo "${CREDS}"
+            python3 - "${OIDC_TOKEN}" <<'CLAIMS'
+          import base64, json, sys
+          payload = sys.argv[1].split(".")[1]
+          payload += "=" * (-len(payload) % 4)
+          claims = json.loads(base64.urlsafe_b64decode(payload))
+          print(json.dumps({k: claims[k] for k in ("sub", "aud", "repository", "ref") if k in claims}, indent=2))
+          CLAIMS
+            exit 1
+          fi
+          AWS_ACCESS_KEY_ID="$(jq -r .AccessKeyId <<<"${CREDS}")"
+          AWS_SECRET_ACCESS_KEY="$(jq -r .SecretAccessKey <<<"${CREDS}")"
+          AWS_SESSION_TOKEN="$(jq -r .SessionToken <<<"${CREDS}")"
+          echo "::add-mask::${AWS_ACCESS_KEY_ID}"
+          echo "::add-mask::${AWS_SECRET_ACCESS_KEY}"
+          echo "::add-mask::${AWS_SESSION_TOKEN}"
+          CA_TOKEN="$(AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID}" \
+            AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY}" \
+            AWS_SESSION_TOKEN="${AWS_SESSION_TOKEN}" \
+            aws codeartifact get-authorization-token \
+              --domain westcode \
+              --domain-owner 069962555850 \
+              --query authorizationToken \
+              --output text)"
+          test -n "${CA_TOKEN}"
+          echo "::add-mask::${CA_TOKEN}"
+          HOST_RULES="$(jq -cn --arg pw "${CA_TOKEN}" '[{
+            matchHost: "westcode-069962555850.d.codeartifact.eu-central-1.amazonaws.com",
+            hostType: "pypi",
+            username: "aws",
+            password: $pw
+          }]')"
+          echo "RENOVATE_HOST_RULES=${HOST_RULES}" >> "$GITHUB_ENV"
 
       - name: Run Renovate
         uses: renovatebot/github-action@v46.3.13

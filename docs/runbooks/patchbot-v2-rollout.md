@@ -394,9 +394,10 @@ automergen) – unabhängig vom Patchbot-Server.
        `.github/workflows/*.yml` pushen kann, ohne den Sammel-PR zu blockieren)
      - Checks: **Read-only** · Commit statuses: **Read-only** · Metadata: **Read-only**
    - **Where can this app be installed:** „Only on this account“.
-2. App in `westcoder` mit **„Only select repositories“** installieren – Start mit dem Pilot-Repository
-   `westcoder/ack-desk` (und bei aktivem Org-Ruleset `westcode-renovate` auf die Bypass-Liste für `renovate/*`
-   bzw. Automerge auf den Ziel-Branch setzen).
+2. App in `westcoder` mit **„Only select repositories“** installieren – aktuell für `westcoder/ack-desk`,
+   `westcoder/westcode-hub` und `westcoder/projectory` (bei aktivem Ruleset bzw. Branch-Protection mit
+   Review-Pflicht `westcode-renovate` auf die Bypass-Liste für `renovate/*` und den Ziel-Branch setzen, damit der
+   `03:00 UTC`-Automerge ohne manuelles Review durchläuft).
 3. In `westcoder/westcode-patchbot` unter Settings → Secrets and variables → Actions als Repository Secrets
    hinterlegen:
    - `RENOVATE_APP_ID`: App ID von `westcode-renovate`
@@ -404,10 +405,13 @@ automergen) – unabhängig vom Patchbot-Server.
 4. Workflow und `deploy/renovate.json` müssen auf dem Default-Branch (`main`) von `westcoder/westcode-patchbot`
    liegen, damit GitHub die `schedule`-Läufe ausführt. Ersttest unter Actions → „Renovate“ → „Run workflow“:
    zuerst mit `dry_run = full` (prüft Log-Vorschau ohne PR-Erstellung), danach mit `dry_run = off`.
-5. Weitere Projekte ohne CodeArtifact werden durch Freischalten in der App-Installation und Aufnahme in
-   `repositories` in `deploy/renovate.json` ergänzt. Für Phase 2 (die 19 AWS-CodeArtifact-Projekte in Konto
-   `069962555850`) ist der OIDC-Block (`codeartifact-read-boundary`) in `.github/workflows/renovate.yml`
-   vorbereitet.
+5. **AWS CodeArtifact (Phase 2, aktiv):** `.github/workflows/renovate.yml` bezieht vor jedem Lauf per GitHub OIDC
+   (`id-token: write`) über die Read-only-Rolle
+   `arn:aws:iam::069962555850:role/westcode-infra/github-renovate-codeartifact-read` (`stacks/aws-westcode/renovate-codeartifact.tf`
+   in `westcoder/westcode-infra`, begrenzt durch `codeartifact-read-boundary`) ein kurzlebiges
+   CodeArtifact-Token für `westcode-069962555850.d.codeartifact.eu-central-1.amazonaws.com` und übergibt es per
+   `RENOVATE_HOST_RULES` (`hostType: "pypi"`). Weitere Projekte (mit oder ohne CodeArtifact) werden einfach durch
+   Freischalten in der App-Installation und Aufnahme in `repositories` in `deploy/renovate.json` ergänzt.
 
 ## 7. AWS ECR (Leserolle)
 
@@ -733,9 +737,10 @@ run_worker --once` (braucht GitHub-App-Konfiguration).
 - **Trivy-DB-Aktualisierung:** `research.trivy.update_trivy_db()` wird vom Scheduler noch nicht aufgerufen;
   bis dahin übernimmt der Dienst `trivy-db` die Aktualisierung (alle 6 h).
 - **Renovate:** läuft zentral per GitHub Actions (`.github/workflows/renovate.yml`, GitHub App
-  `westcode-renovate`), zunächst für `westcoder/ack-desk`. Für Phase 2 (die 19 CodeArtifact-Projekte in
-  AWS-Konto `069962555850`) muss noch die OIDC-Leserolle unter `codeartifact-read-boundary` in `westcode-infra`
-  angelegt und der vorbereitete Schritt im Workflow aktiviert werden.
+  `westcode-renovate`) inklusive kurzlebigem AWS-CodeArtifact-OIDC-Token
+  (`arn:aws:iam::069962555850:role/westcode-infra/github-renovate-codeartifact-read`), aktuell für
+  `westcoder/ack-desk`, `westcoder/westcode-hub` und `westcoder/projectory`. Weitere Projekte können schrittweise
+  in der App-Installation freigeschaltet und in `deploy/renovate.json` ergänzt werden.
 - **CI-Status über Commit-Statuses:** reporten Projekte nur Commit-Statuses statt Checks, braucht die App
   zusätzlich `Commit statuses: Read` und Patchbot eine Code-Anpassung.
 - **Private Registries (CodeArtifact):** weder Worker-Bumps noch Sandbox haben Registry-Credentials; solche

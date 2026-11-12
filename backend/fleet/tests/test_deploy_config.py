@@ -70,7 +70,11 @@ def test_renovate_pilot_config_and_workflow():
     assert renovate["npmrcMerge"] is True
     for manager in ("poetry", "pep621", "npm", "dockerfile", "docker-compose", "github-actions", "circleci"):
         assert manager in renovate["enabledManagers"], manager
-    assert renovate["repositories"] == [{"repository": "westcoder/ack-desk", "baseBranchPatterns": ["develop"]}]
+    assert renovate["repositories"] == [
+        {"repository": "westcoder/ack-desk", "baseBranchPatterns": ["develop"]},
+        {"repository": "westcoder/westcode-hub", "baseBranchPatterns": ["main"]},
+        {"repository": "westcoder/projectory", "baseBranchPatterns": ["develop"]},
+    ]
 
     vuln_alerts = renovate["vulnerabilityAlerts"]
     assert vuln_alerts["enabled"] is True
@@ -115,7 +119,7 @@ def test_renovate_pilot_config_and_workflow():
     assert workflow_path.is_file()
     workflow_text = workflow_path.read_text(encoding="utf-8")
     workflow = yaml.safe_load(workflow_text)
-    assert workflow["permissions"] == {"contents": "read"}
+    assert workflow["permissions"] == {"contents": "read", "id-token": "write"}
 
     crons = [entry["cron"] for entry in workflow["on"]["schedule"]]
     assert crons == ["0 2 * * 1-4", "0 3 * * 1-4"]
@@ -143,6 +147,15 @@ def test_renovate_pilot_config_and_workflow():
     assert "inputs.dry_run == 'lookup'" in dry_run_expr
     assert "%5Bbot%5D" in dry_run_step["run"]
     assert "@users.noreply.github.com" in dry_run_step["run"]
+
+    oidc_step = next(s for s in steps if "RENOVATE_HOST_RULES" in str(s.get("run", "")))
+    assert oidc_step["env"]["ROLE_ARN"] == "arn:aws:iam::069962555850:role/westcode-infra/github-renovate-codeartifact-read"
+    assert oidc_step["env"]["AWS_DEFAULT_REGION"] == "eu-central-1"
+    assert "assume-role-with-web-identity" in oidc_step["run"]
+    assert "aws codeartifact get-authorization-token" in oidc_step["run"]
+    assert "::add-mask::" in oidc_step["run"]
+    assert "westcode-069962555850.d.codeartifact.eu-central-1.amazonaws.com" in oidc_step["run"]
+    assert "${{" not in oidc_step["run"]
 
     renovate_step = next(s for s in steps if str(s.get("uses", "")).startswith("renovatebot/github-action@"))
     assert re.fullmatch(r"renovatebot/github-action@v\d+\.\d+\.\d+", renovate_step["uses"])

@@ -29,7 +29,7 @@ concurrency:
 jobs:
   renovate:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Checkout configuration
         uses: actions/checkout@v6
@@ -57,10 +57,11 @@ jobs:
             echo "RENOVATE_DRY_RUN=${DRY_RUN_MODE}" >> "$GITHUB_ENV"
           fi
 
-      - name: Mint short-lived AWS CodeArtifact token via OIDC
+      - name: Configure registry credentials (AWS CodeArtifact OIDC & Shopware)
         env:
           ROLE_ARN: arn:aws:iam::069962555850:role/westcode-infra/github-renovate-codeartifact-read
           AWS_DEFAULT_REGION: eu-central-1
+          SHOPWARE_PACKAGES_TOKEN: ${{ secrets.SHOPWARE_PACKAGES_TOKEN }}
         run: |
           set -euo pipefail
           OIDC_TOKEN="$(curl -fsSL \
@@ -100,12 +101,28 @@ jobs:
               --output text)"
           test -n "${CA_TOKEN}"
           echo "::add-mask::${CA_TOKEN}"
-          HOST_RULES="$(jq -cn --arg pw "${CA_TOKEN}" '[{
-            matchHost: "westcode-069962555850.d.codeartifact.eu-central-1.amazonaws.com",
-            hostType: "pypi",
-            username: "aws",
-            password: $pw
-          }]')"
+          SW_TOKEN=""
+          if [ -n "${SHOPWARE_PACKAGES_TOKEN:-}" ]; then
+            if SW_EXTRACTED="$(jq -er '.bearer["packages.shopware.com"] // empty' <<<"${SHOPWARE_PACKAGES_TOKEN}" 2>/dev/null)" && [ -n "${SW_EXTRACTED}" ]; then
+              SW_TOKEN="${SW_EXTRACTED}"
+            else
+              SW_TOKEN="${SHOPWARE_PACKAGES_TOKEN}"
+            fi
+            echo "::add-mask::${SW_TOKEN}"
+          fi
+          HOST_RULES="$(jq -cn --arg pw "${CA_TOKEN}" --arg sw "${SW_TOKEN}" '
+            [{
+              matchHost: "westcode-069962555850.d.codeartifact.eu-central-1.amazonaws.com",
+              hostType: "pypi",
+              username: "aws",
+              password: $pw
+            }]
+            + (if $sw != "" then [{
+              matchHost: "packages.shopware.com",
+              hostType: "packagist",
+              token: $sw
+            }] else [] end)
+          ')"
           echo "RENOVATE_HOST_RULES=${HOST_RULES}" >> "$GITHUB_ENV"
 
       - name: Run Renovate

@@ -68,12 +68,24 @@ def test_renovate_pilot_config_and_workflow():
     assert renovate["constraints"] == {"npm": "^11.0.0"}
     assert "allow-remote=all" in renovate["npmrc"]
     assert renovate["npmrcMerge"] is True
-    for manager in ("poetry", "pep621", "npm", "dockerfile", "docker-compose", "github-actions", "circleci"):
+    for manager in ("poetry", "pep621", "npm", "composer", "dockerfile", "docker-compose", "github-actions", "circleci"):
         assert manager in renovate["enabledManagers"], manager
     assert renovate["repositories"] == [
         {"repository": "westcoder/ack-desk", "baseBranchPatterns": ["develop"]},
         {"repository": "westcoder/westcode-hub", "baseBranchPatterns": ["main"]},
         {"repository": "westcoder/projectory", "baseBranchPatterns": ["develop"]},
+        {"repository": "westcoder/brockhaus", "baseBranchPatterns": ["develop"]},
+        {"repository": "westcoder/masteroil", "baseBranchPatterns": ["develop"]},
+        {"repository": "westcoder/wyze-agent", "baseBranchPatterns": ["develop"]},
+        {"repository": "westcoder/materialdatenbank", "baseBranchPatterns": ["develop"]},
+        {"repository": "westcoder/ses-service-app", "baseBranchPatterns": ["develop"]},
+        {"repository": "westcoder/ses-sl-sw-sync", "baseBranchPatterns": ["develop"]},
+        {"repository": "westcoder/service-center", "baseBranchPatterns": ["main"]},
+        {
+            "repository": "westcoder/ses-shop",
+            "baseBranchPatterns": ["main"],
+            "constraints": {"npm": "^11.0.0", "php": "^8.5.0"},
+        },
     ]
 
     vuln_alerts = renovate["vulnerabilityAlerts"]
@@ -106,7 +118,7 @@ def test_renovate_pilot_config_and_workflow():
     python_minor = next(
         r
         for r in renovate["packageRules"]
-        if r.get("matchPackageNames") == ["python", "cimg/python"] and r.get("matchUpdateTypes") == ["minor"]
+        if r.get("matchPackageNames") == ["python", "cimg/python", "php"] and r.get("matchUpdateTypes") == ["minor"]
     )
     assert renovate["packageRules"].index(python_minor) > non_major_idx
     assert python_minor["groupName"] is None
@@ -153,10 +165,13 @@ def test_renovate_pilot_config_and_workflow():
     oidc_step = next(s for s in steps if "RENOVATE_HOST_RULES" in str(s.get("run", "")))
     assert oidc_step["env"]["ROLE_ARN"] == "arn:aws:iam::069962555850:role/westcode-infra/github-renovate-codeartifact-read"
     assert oidc_step["env"]["AWS_DEFAULT_REGION"] == "eu-central-1"
+    assert "SHOPWARE_PACKAGES_TOKEN" in oidc_step["env"]["SHOPWARE_PACKAGES_TOKEN"]
     assert "assume-role-with-web-identity" in oidc_step["run"]
     assert "aws codeartifact get-authorization-token" in oidc_step["run"]
     assert "::add-mask::" in oidc_step["run"]
     assert "westcode-069962555850.d.codeartifact.eu-central-1.amazonaws.com" in oidc_step["run"]
+    assert "packages.shopware.com" in oidc_step["run"]
+    assert 'hostType: "packagist"' in oidc_step["run"]
     assert "${{" not in oidc_step["run"]
 
     renovate_step = next(s for s in steps if str(s.get("uses", "")).startswith("renovatebot/github-action@"))

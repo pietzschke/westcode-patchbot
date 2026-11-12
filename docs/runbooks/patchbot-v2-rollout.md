@@ -394,18 +394,20 @@ automergen) – unabhängig vom Patchbot-Server.
        `.github/workflows/*.yml` pushen kann, ohne den Sammel-PR zu blockieren)
      - Checks: **Read-only** · Commit statuses: **Read-only** · Metadata: **Read-only**
    - **Where can this app be installed:** „Only on this account“.
-2. App in `westcoder` mit **„Only select repositories“** installieren – aktuell für `westcoder/ack-desk`,
-   `westcoder/westcode-hub` und `westcoder/projectory`. In den Repositories ist `Allow auto-merge` aktiviert,
-   `required_approving_review_count: 1` gesetzt und `westcode-renovate` als PR-Bypass (`pull_request`) hinterlegt:
+2. App in `westcoder` mit **„Only select repositories“** installieren – aktuell für die 11 Repositories in
+   `deploy/renovate.json` (`ack-desk`, `westcode-hub`, `projectory`, `brockhaus`, `masteroil`, `wyze-agent`,
+   `materialdatenbank`, `ses-service-app`, `ses-sl-sw-sync`, `service-center`, `ses-shop`). In allen Repositories mit
+   Review-Pflicht ist `Allow auto-merge` aktiviert und `westcode-renovate` als PR-Bypass (`pull_request`) hinterlegt:
    - **Security-PRs (`vulnerabilityAlerts`) & Non-Major-Sammel-PR (`renovate/non-major`):** werden von Renovate nach
      grüner CI direkt per API (`platformAutomerge: false`) **ohne manuelles Approval** gemerged.
-   - **Major-PRs & Python-Minor-Runtime (`major-update`):** Renovate merged sie nicht direkt (`automerge: false`);
+   - **Major-PRs & Python/PHP-Minor-Runtime (`major-update`):** Renovate merged sie nicht direkt (`automerge: false`);
      ein Nachlaufschritt in `.github/workflows/renovate.yml` aktiviert GitHubs natives `enablePullRequestAutoMerge`,
      sodass GitHub den PR erst nach **1 menschlichem Approval** (und grüner CI) automatisch merged.
 3. In `westcoder/westcode-patchbot` unter Settings → Secrets and variables → Actions als Repository Secrets
    hinterlegen:
    - `RENOVATE_APP_ID`: App ID von `westcode-renovate`
    - `RENOVATE_APP_PRIVATE_KEY`: erzeugter Private Key (`.pem`-Inhalt)
+   - `SHOPWARE_PACKAGES_TOKEN`: Bearer-Token (oder `COMPOSER_AUTH`-JSON) für `packages.shopware.com` (`ses-shop`)
 4. Workflow und `deploy/renovate.json` müssen auf dem Default-Branch (`main`) von `westcoder/westcode-patchbot`
    liegen, damit GitHub die `schedule`-Läufe ausführt. Ersttest unter Actions → „Renovate“ → „Run workflow“:
    zuerst mit `dry_run = full` (prüft Log-Vorschau ohne PR-Erstellung), danach mit `dry_run = off`.

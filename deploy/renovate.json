@@ -53,12 +53,65 @@
       "baseBranchPatterns": [
         "develop"
       ]
+    },
+    {
+      "repository": "westcoder/brockhaus",
+      "baseBranchPatterns": [
+        "develop"
+      ]
+    },
+    {
+      "repository": "westcoder/masteroil",
+      "baseBranchPatterns": [
+        "develop"
+      ]
+    },
+    {
+      "repository": "westcoder/wyze-agent",
+      "baseBranchPatterns": [
+        "develop"
+      ]
+    },
+    {
+      "repository": "westcoder/materialdatenbank",
+      "baseBranchPatterns": [
+        "develop"
+      ]
+    },
+    {
+      "repository": "westcoder/ses-service-app",
+      "baseBranchPatterns": [
+        "develop"
+      ]
+    },
+    {
+      "repository": "westcoder/ses-sl-sw-sync",
+      "baseBranchPatterns": [
+        "develop"
+      ]
+    },
+    {
+      "repository": "westcoder/service-center",
+      "baseBranchPatterns": [
+        "main"
+      ]
+    },
+    {
+      "repository": "westcoder/ses-shop",
+      "baseBranchPatterns": [
+        "main"
+      ],
+      "constraints": {
+        "npm": "^11.0.0",
+        "php": "^8.5.0"
+      }
     }
   ],
   "enabledManagers": [
     "poetry",
     "pep621",
     "npm",
+    "composer",
     "dockerfile",
     "docker-compose",
     "github-actions",
@@ -100,10 +153,11 @@
       ]
     },
     {
-      "description": "Treat Python minor runtime upgrades (e.g. 3.13 -> 3.14/3.15) like major updates without automerge",
+      "description": "Treat Python and PHP minor runtime upgrades (e.g. Python 3.13 -> 3.15, PHP 8.5 -> 8.6) like major updates without automerge",
       "matchPackageNames": [
         "python",
-        "cimg/python"
+        "cimg/python",
+        "php"
       ],
       "matchUpdateTypes": [
         "minor"

@@ -79,7 +79,9 @@ def test_renovate_pilot_config_and_workflow():
     vuln_alerts = renovate["vulnerabilityAlerts"]
     assert vuln_alerts["enabled"] is True
     assert vuln_alerts["groupName"] is None
-    assert vuln_alerts["automerge"] is False
+    assert vuln_alerts["automerge"] is True
+    assert vuln_alerts["platformAutomerge"] is False
+    assert vuln_alerts["ignoreTests"] is False
 
     non_major = next(r for r in renovate["packageRules"] if r.get("groupSlug") == "non-major")
     assert set(non_major["matchUpdateTypes"]) >= {"minor", "patch", "pin", "digest"}
@@ -162,6 +164,14 @@ def test_renovate_pilot_config_and_workflow():
     assert renovate_step["with"]["configurationFile"] == "deploy/renovate.json"
     assert "RENOVATE_GIT_AUTHOR" in renovate_step["env"]
     assert "RENOVATE_USERNAME" in renovate_step["env"]
+
+    major_automerge_step = next(s for s in steps if "enablePullRequestAutoMerge" in str(s.get("run", "")))
+    assert steps.index(major_automerge_step) > steps.index(renovate_step)
+    assert "inputs.dry_run == 'full'" in major_automerge_step["if"]
+    assert "inputs.dry_run == 'lookup'" in major_automerge_step["if"]
+    assert 'reviewDecision == "REVIEW_REQUIRED"' in major_automerge_step["run"]
+    assert "--label \"major-update\"" in major_automerge_step["run"]
+    assert "${{" not in major_automerge_step["run"]
 
     for path in (renovate_path, workflow_path, runbook_path):
         assert "533267181938" not in path.read_text(encoding="utf-8"), path.name

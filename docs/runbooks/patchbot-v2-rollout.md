@@ -395,9 +395,13 @@ automergen) – unabhängig vom Patchbot-Server.
      - Checks: **Read-only** · Commit statuses: **Read-only** · Metadata: **Read-only**
    - **Where can this app be installed:** „Only on this account“.
 2. App in `westcoder` mit **„Only select repositories“** installieren – aktuell für `westcoder/ack-desk`,
-   `westcoder/westcode-hub` und `westcoder/projectory` (bei aktivem Ruleset bzw. Branch-Protection mit
-   Review-Pflicht `westcode-renovate` auf die Bypass-Liste für `renovate/*` und den Ziel-Branch setzen, damit der
-   `03:00 UTC`-Automerge ohne manuelles Review durchläuft).
+   `westcoder/westcode-hub` und `westcoder/projectory`. In den Repositories ist `Allow auto-merge` aktiviert,
+   `required_approving_review_count: 1` gesetzt und `westcode-renovate` als PR-Bypass (`pull_request`) hinterlegt:
+   - **Security-PRs (`vulnerabilityAlerts`) & Non-Major-Sammel-PR (`renovate/non-major`):** werden von Renovate nach
+     grüner CI direkt per API (`platformAutomerge: false`) **ohne manuelles Approval** gemerged.
+   - **Major-PRs & Python-Minor-Runtime (`major-update`):** Renovate merged sie nicht direkt (`automerge: false`);
+     ein Nachlaufschritt in `.github/workflows/renovate.yml` aktiviert GitHubs natives `enablePullRequestAutoMerge`,
+     sodass GitHub den PR erst nach **1 menschlichem Approval** (und grüner CI) automatisch merged.
 3. In `westcoder/westcode-patchbot` unter Settings → Secrets and variables → Actions als Repository Secrets
    hinterlegen:
    - `RENOVATE_APP_ID`: App ID von `westcode-renovate`

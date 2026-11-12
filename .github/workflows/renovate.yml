@@ -117,3 +117,49 @@ jobs:
           LOG_LEVEL: info
           RENOVATE_USERNAME: "${{ steps.app-token.outputs.app-slug }}[bot]"
           RENOVATE_GIT_AUTHOR: ${{ steps.bot-env.outputs.git_author }}
+
+      - name: Enable GitHub auto-merge on Major PRs (awaits human approval)
+        if: ${{ !(github.event_name == 'workflow_dispatch' && (inputs.dry_run == 'full' || inputs.dry_run == 'lookup')) }}
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: |
+          set -euo pipefail
+          MUTATION='mutation($id: ID!, $method: PullRequestMergeMethod!) {
+            enablePullRequestAutoMerge(input: {pullRequestId: $id, mergeMethod: $method}) {
+              pullRequest { number autoMergeRequest { enabledAt } }
+            }
+          }'
+          for REPO in $(jq -r '.repositories[].repository' deploy/renovate.json); do
+            if ! MERGE_METHOD="$(gh api "repos/${REPO}" --jq '
+              if .allow_auto_merge != true then "DISABLED"
+              elif .allow_squash_merge then "SQUASH"
+              elif .allow_merge_commit then "MERGE"
+              else "REBASE" end
+            ' 2>/dev/null)"; then
+              echo "::warning::Cannot inspect ${REPO} with GitHub App token; skipping Major auto-merge setup"
+              continue
+            fi
+            if [ "${MERGE_METHOD}" = "DISABLED" ]; then
+              echo "::warning::Allow auto-merge is disabled on ${REPO}; skipping"
+              continue
+            fi
+            PRS_JSON="$(gh pr list --repo "${REPO}" --state open --label "major-update" \
+              --json number,id,author,autoMergeRequest,reviewDecision)"
+            jq -r --arg slug "${APP_SLUG}" '
+              .[]
+              | select(
+                  (.author.login == "app/\($slug)" or .author.login == "\($slug)[bot]" or .author.login == $slug)
+                  and .autoMergeRequest == null
+                  and .reviewDecision == "REVIEW_REQUIRED"
+                )
+              | "\(.number)\t\(.id)"
+            ' <<<"${PRS_JSON}" | while IFS=$'\t' read -r PR_NUM PR_ID; do
+              [ -n "${PR_ID}" ] || continue
+              echo "Enabling GitHub auto-merge (${MERGE_METHOD}, awaiting human approval) on ${REPO}#${PR_NUM}"
+              gh api graphql \
+                -f query="${MUTATION}" \
+                -f id="${PR_ID}" \
+                -f method="${MERGE_METHOD}" >/dev/null
+            done
+          done

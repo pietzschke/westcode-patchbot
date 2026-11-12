@@ -21,7 +21,9 @@
   "vulnerabilityAlerts": {
     "enabled": true,
     "groupName": null,
-    "automerge": false,
+    "automerge": true,
+    "platformAutomerge": false,
+    "ignoreTests": false,
     "prConcurrentLimit": 0,
     "branchConcurrentLimit": 0,
     "prHourlyLimit": 0,

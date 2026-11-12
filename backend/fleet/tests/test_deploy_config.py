@@ -88,7 +88,9 @@ def test_renovate_pilot_config_and_workflow():
     assert major["rebaseWhen"] == "conflicted"
     assert major["prConcurrentLimit"] == 2
     assert major["branchConcurrentLimit"] == 2
-    assert major["prHourlyLimit"] == 1
+    # Renovate's HourlyPRs counter is shared with renovate/non-major (prPriority 10),
+    # so 2 allows 1 non-major PR + 1 major PR in the same 02:00 UTC run without starving majors.
+    assert major["prHourlyLimit"] == 2
     assert major["prPriority"] < 0
 
     assert workflow_path.is_file()

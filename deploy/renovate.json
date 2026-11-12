@@ -12,6 +12,11 @@
   "dependencyDashboard": {
     "enabled": true
   },
+  "constraints": {
+    "npm": "^11.0.0"
+  },
+  "npmrc": "allow-remote=all\n",
+  "npmrcMerge": true,
   "osvVulnerabilityAlerts": true,
   "vulnerabilityAlerts": {
     "enabled": true,
@@ -69,6 +74,28 @@
       "matchUpdateTypes": [
         "major"
       ],
+      "automerge": false,
+      "rebaseWhen": "conflicted",
+      "prPriority": -5,
+      "prConcurrentLimit": 2,
+      "branchConcurrentLimit": 2,
+      "prHourlyLimit": 2,
+      "labels": [
+        "dependencies",
+        "major-update"
+      ]
+    },
+    {
+      "description": "Treat Python minor runtime upgrades (e.g. 3.13 -> 3.14/3.15) like major updates without automerge",
+      "matchPackageNames": [
+        "python",
+        "cimg/python"
+      ],
+      "matchUpdateTypes": [
+        "minor"
+      ],
+      "groupName": null,
+      "groupSlug": null,
       "automerge": false,
       "rebaseWhen": "conflicted",
       "prPriority": -5,

@@ -65,6 +65,9 @@ def test_renovate_pilot_config_and_workflow():
     assert renovate["semanticCommits"] == "enabled"
     assert renovate["dependencyDashboard"] == {"enabled": True}
     assert renovate["osvVulnerabilityAlerts"] is True
+    assert renovate["constraints"] == {"npm": "^11.0.0"}
+    assert "allow-remote=all" in renovate["npmrc"]
+    assert renovate["npmrcMerge"] is True
     for manager in ("poetry", "pep621", "npm", "dockerfile", "docker-compose", "github-actions", "circleci"):
         assert manager in renovate["enabledManagers"], manager
     assert renovate["repositories"] == [{"repository": "westcoder/ack-desk", "baseBranchPatterns": ["develop"]}]
@@ -92,6 +95,22 @@ def test_renovate_pilot_config_and_workflow():
     # so 2 allows 1 non-major PR + 1 major PR in the same 02:00 UTC run without starving majors.
     assert major["prHourlyLimit"] == 2
     assert major["prPriority"] < 0
+
+    non_major_idx = renovate["packageRules"].index(non_major)
+    python_minor = next(
+        r
+        for r in renovate["packageRules"]
+        if r.get("matchPackageNames") == ["python", "cimg/python"] and r.get("matchUpdateTypes") == ["minor"]
+    )
+    assert renovate["packageRules"].index(python_minor) > non_major_idx
+    assert python_minor["groupName"] is None
+    assert python_minor["groupSlug"] is None
+    assert python_minor["automerge"] is False
+    assert python_minor["rebaseWhen"] == "conflicted"
+    assert python_minor["prConcurrentLimit"] == 2
+    assert python_minor["branchConcurrentLimit"] == 2
+    assert python_minor["prHourlyLimit"] == 2
+    assert python_minor["prPriority"] < 0
 
     assert workflow_path.is_file()
     workflow_text = workflow_path.read_text(encoding="utf-8")

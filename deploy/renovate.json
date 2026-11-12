@@ -104,7 +104,27 @@
       "constraints": {
         "npm": "^11.0.0",
         "php": "^8.5.0"
-      }
+      },
+      "packageRules": [
+        {
+          "description": "Ignore local path Shopware plugins not published on Packagist",
+          "matchDatasources": [
+            "packagist"
+          ],
+          "matchPackageNames": [
+            "west/**",
+            "tcinn/**",
+            "jlau/**"
+          ],
+          "enabled": false
+        }
+      ]
+    },
+    {
+      "repository": "westcoder/csa",
+      "baseBranchPatterns": [
+        "develop"
+      ]
     }
   ],
   "enabledManagers": [

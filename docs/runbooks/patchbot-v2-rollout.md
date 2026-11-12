@@ -394,9 +394,9 @@ automergen) – unabhängig vom Patchbot-Server.
        `.github/workflows/*.yml` pushen kann, ohne den Sammel-PR zu blockieren)
      - Checks: **Read-only** · Commit statuses: **Read-only** · Metadata: **Read-only**
    - **Where can this app be installed:** „Only on this account“.
-2. App in `westcoder` mit **„Only select repositories“** installieren – aktuell für die 11 Repositories in
+2. App in `westcoder` mit **„Only select repositories“** installieren – aktuell für die 12 Repositories in
    `deploy/renovate.json` (`ack-desk`, `westcode-hub`, `projectory`, `brockhaus`, `masteroil`, `wyze-agent`,
-   `materialdatenbank`, `ses-service-app`, `ses-sl-sw-sync`, `service-center`, `ses-shop`). In allen Repositories mit
+   `materialdatenbank`, `ses-service-app`, `ses-sl-sw-sync`, `service-center`, `ses-shop`, `csa`). In allen Repositories mit
    Review-Pflicht ist `Allow auto-merge` aktiviert und `westcode-renovate` als PR-Bypass (`pull_request`) hinterlegt:
    - **Security-PRs (`vulnerabilityAlerts`) & Non-Major-Sammel-PR (`renovate/non-major`):** werden von Renovate nach
      grüner CI direkt per API (`platformAutomerge: false`) **ohne manuelles Approval** gemerged.

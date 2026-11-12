@@ -85,7 +85,16 @@ def test_renovate_pilot_config_and_workflow():
             "repository": "westcoder/ses-shop",
             "baseBranchPatterns": ["main"],
             "constraints": {"npm": "^11.0.0", "php": "^8.5.0"},
+            "packageRules": [
+                {
+                    "description": "Ignore local path Shopware plugins not published on Packagist",
+                    "matchDatasources": ["packagist"],
+                    "matchPackageNames": ["west/**", "tcinn/**", "jlau/**"],
+                    "enabled": False,
+                }
+            ],
         },
+        {"repository": "westcoder/csa", "baseBranchPatterns": ["develop"]},
     ]
 
     vuln_alerts = renovate["vulnerabilityAlerts"]

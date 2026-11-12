@@ -142,6 +142,9 @@ def test_renovate_pilot_config_and_workflow():
     dry_run_input = workflow["on"]["workflow_dispatch"]["inputs"]["dry_run"]
     assert dry_run_input["options"] == ["full", "lookup", "off"]
     assert dry_run_input["default"] == "full"
+    repos_input = workflow["on"]["workflow_dispatch"]["inputs"]["repositories"]
+    assert repos_input["type"] == "string"
+    assert repos_input["default"] == ""
 
     steps = workflow["jobs"]["renovate"]["steps"]
     checkout_step = next(s for s in steps if str(s.get("uses", "")).startswith("actions/checkout@"))

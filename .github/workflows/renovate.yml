@@ -17,6 +17,11 @@ name: Renovate
           - "lookup"
           - "off"
         default: "full"
+      repositories:
+        description: "Optional comma-separated subset of repos (e.g. 'ack-desk,westcode-hub,projectory'; empty = all)"
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -48,6 +53,7 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
           DRY_RUN_MODE: ${{ github.event_name == 'workflow_dispatch' && (inputs.dry_run == 'full' || inputs.dry_run == 'lookup') && inputs.dry_run || '' }}
+          REPO_FILTER: ${{ github.event_name == 'workflow_dispatch' && inputs.repositories || '' }}
         run: |
           set -euo pipefail
           BOT_ID="$(gh api "users/${APP_SLUG}%5Bbot%5D" --jq .id)"
@@ -55,6 +61,26 @@ jobs:
           echo "git_author=${APP_SLUG}[bot] <${BOT_ID}+${APP_SLUG}[bot]@users.noreply.github.com>" >> "$GITHUB_OUTPUT"
           if [ -n "${DRY_RUN_MODE}" ]; then
             echo "RENOVATE_DRY_RUN=${DRY_RUN_MODE}" >> "$GITHUB_ENV"
+          fi
+          if [ -n "${REPO_FILTER}" ]; then
+            jq --arg repos "${REPO_FILTER}" '
+              ($repos | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $allow
+              | .repositories |= map(
+                  select(
+                    .repository as $r
+                    | ($allow | index($r)) != null
+                      or ($allow | index($r | sub("^westcoder/"; ""))) != null
+                  )
+                )
+            ' deploy/renovate.json > deploy/renovate.filtered.json
+            MATCHED="$(jq '.repositories | length' deploy/renovate.filtered.json)"
+            if [ "${MATCHED}" -eq 0 ]; then
+              echo "::error::No repositories in deploy/renovate.json matched '${REPO_FILTER}'"
+              exit 1
+            fi
+            mv deploy/renovate.filtered.json deploy/renovate.json
+            echo "Filtered run to ${MATCHED} repository/repositories:"
+            jq -r '.repositories[].repository' deploy/renovate.json
           fi
 
       - name: Configure registry credentials (AWS CodeArtifact OIDC & Shopware)

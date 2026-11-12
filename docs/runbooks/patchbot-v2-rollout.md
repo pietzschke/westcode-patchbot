@@ -381,8 +381,9 @@ Commit-Status (alte OAuth-Integration), erscheint dort kein CI-Status (siehe [Of
 ### Separate GitHub App für Renovate (`westcode-renovate`)
 
 Renovate läuft zentral über `.github/workflows/renovate.yml` und `deploy/renovate.json` in
-`westcoder/westcode-patchbot` (`Mo–Do` `02:00 UTC` Sammel-PR anlegen/aktualisieren, `03:00 UTC` grünen Sammel-PR
-automergen) – unabhängig vom Patchbot-Server.
+`westcoder/westcode-patchbot` (täglich `Mo–So` nachts `02:00` / `03:00 UTC` sowie mittags `11:00` / `12:00 UTC` für
+Security-PRs; reguläre Non-Major- & Major-PRs über `schedule` in `deploy/renovate.json` nur `Mo–Do` nachts) –
+unabhängig vom Patchbot-Server.
 
 1. Org `westcoder` → Settings → Developer settings → GitHub Apps → „New GitHub App“:
    - **Name:** `westcode-renovate`, **Webhook:** deaktiviert (`Active` aus).

@@ -103,6 +103,11 @@ def test_renovate_pilot_config_and_workflow():
     assert vuln_alerts["automerge"] is True
     assert vuln_alerts["platformAutomerge"] is False
     assert vuln_alerts["ignoreTests"] is False
+    assert vuln_alerts["schedule"] == ["at any time"]
+    assert vuln_alerts["automergeSchedule"] == ["at any time"]
+
+    assert renovate["schedule"] == ["* 0-6 * * 1-4"]
+    assert renovate["automergeSchedule"] == ["* * * * 1-4"]
 
     non_major = next(r for r in renovate["packageRules"] if r.get("groupSlug") == "non-major")
     assert set(non_major["matchUpdateTypes"]) >= {"minor", "patch", "pin", "digest"}
@@ -145,8 +150,7 @@ def test_renovate_pilot_config_and_workflow():
     assert workflow["permissions"] == {"contents": "read", "id-token": "write"}
 
     crons = [entry["cron"] for entry in workflow["on"]["schedule"]]
-    assert crons == ["0 2 * * 1-4", "0 3 * * 1-4"]
-    assert all(c.split()[4] == "1-4" for c in crons)
+    assert crons == ["0 2 * * *", "0 3 * * *", "0 11 * * *", "0 12 * * *"]
 
     dry_run_input = workflow["on"]["workflow_dispatch"]["inputs"]["dry_run"]
     assert dry_run_input["options"] == ["full", "lookup", "off"]

@@ -2,10 +2,12 @@ name: Renovate
 
 "on":
   schedule:
-    # Mo–Do 02:00 UTC (nach ack-desk nightly-merge-back um 01:00 UTC): Sammel-PR erstellen/aktualisieren.
-    - cron: "0 2 * * 1-4"
-    # Mo–Do 03:00 UTC: grünen Sammel-PR nach abgeschlossenen CircleCI-Checks automatisch mergen.
-    - cron: "0 3 * * 1-4"
+    # Täglich (Mo–So) 02:00 & 03:00 UTC: Security jeden Tag; non-major & major nur Mo–Do (gesteuert über renovate.json schedule).
+    - cron: "0 2 * * *"
+    - cron: "0 3 * * *"
+    # Täglich (Mo–So) 11:00 & 12:00 UTC (12:00 / 13:00 MEZ): Mittagslauf für Security-PRs & Auto-Merge.
+    - cron: "0 11 * * *"
+    - cron: "0 12 * * *"
   workflow_dispatch:
     inputs:
       dry_run:

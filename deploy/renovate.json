@@ -18,6 +18,9 @@
   "dependencyDashboard": {
     "enabled": true
   },
+  "minimumReleaseAge": "3 days",
+  "minimumReleaseAgeBehaviour": "timestamp-optional",
+  "internalChecksFilter": "strict",
   "constraints": {
     "npm": "^11.0.0"
   },
@@ -28,6 +31,7 @@
     "enabled": true,
     "groupName": null,
     "groupSlug": null,
+    "minimumReleaseAge": null,
     "prConcurrentLimit": 0,
     "branchConcurrentLimit": 0,
     "prHourlyLimit": 0,
@@ -40,9 +44,57 @@
     "addLabels": [
       "security",
       "dependencies"
+    ],
+    "packageRules": [
+      {
+        "description": "Keep tightly coupled Angular packages grouped together even for security alerts",
+        "matchPackageNames": [
+          "@angular/**",
+          "@angular-devkit/**",
+          "@schematics/angular",
+          "ng-packagr"
+        ],
+        "groupName": "Angular monorepo",
+        "groupSlug": "angular-monorepo",
+        "branchTopic": "angular-monorepo-vulnerability"
+      },
+      {
+        "description": "Keep tightly coupled Shopware packages grouped together even for security alerts",
+        "matchPackageNames": [
+          "shopware/**",
+          "@shopware-ag/**"
+        ],
+        "groupName": "Shopware monorepo",
+        "groupSlug": "shopware-monorepo",
+        "branchTopic": "shopware-monorepo-vulnerability"
+      }
     ]
   },
   "repositories": [
+    {
+      "repository": "westcoder/westcode-patchbot",
+      "baseBranchPatterns": [
+        "main"
+      ],
+      "enabledManagers": [
+        "github-actions"
+      ],
+      "packageRules": [
+        {
+          "description": "Allow non-major GitHub Actions self-updates to automerge in runner repo without a separate CI workflow",
+          "matchManagers": [
+            "github-actions"
+          ],
+          "matchUpdateTypes": [
+            "minor",
+            "patch",
+            "pin",
+            "digest"
+          ],
+          "ignoreTests": true
+        }
+      ]
+    },
     {
       "repository": "westcoder/ack-desk",
       "baseBranchPatterns": [
@@ -201,6 +253,32 @@
         "dependencies",
         "major-update"
       ]
+    },
+    {
+      "description": "Keep tightly coupled Angular packages grouped together on major upgrades",
+      "matchPackageNames": [
+        "@angular/**",
+        "@angular-devkit/**",
+        "@schematics/angular",
+        "ng-packagr"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "groupName": "Angular monorepo (major)",
+      "groupSlug": "angular-monorepo-major"
+    },
+    {
+      "description": "Keep tightly coupled Shopware packages grouped together on major upgrades",
+      "matchPackageNames": [
+        "shopware/**",
+        "@shopware-ag/**"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "groupName": "Shopware monorepo (major)",
+      "groupSlug": "shopware-monorepo-major"
     }
   ]
 }

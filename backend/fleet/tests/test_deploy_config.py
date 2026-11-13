@@ -64,6 +64,9 @@ def test_renovate_pilot_config_and_workflow():
     assert "extends" not in renovate
     assert renovate["semanticCommits"] == "enabled"
     assert renovate["dependencyDashboard"] == {"enabled": True}
+    assert renovate["minimumReleaseAge"] == "3 days"
+    assert renovate["minimumReleaseAgeBehaviour"] == "timestamp-optional"
+    assert renovate["internalChecksFilter"] == "strict"
     assert renovate["osvVulnerabilityAlerts"] is True
     assert renovate["constraints"] == {"npm": "^11.0.0"}
     assert "allow-remote=all" in renovate["npmrc"]
@@ -71,6 +74,19 @@ def test_renovate_pilot_config_and_workflow():
     for manager in ("poetry", "pep621", "npm", "composer", "dockerfile", "docker-compose", "github-actions", "circleci"):
         assert manager in renovate["enabledManagers"], manager
     assert renovate["repositories"] == [
+        {
+            "repository": "westcoder/westcode-patchbot",
+            "baseBranchPatterns": ["main"],
+            "enabledManagers": ["github-actions"],
+            "packageRules": [
+                {
+                    "description": "Allow non-major GitHub Actions self-updates to automerge in runner repo without a separate CI workflow",
+                    "matchManagers": ["github-actions"],
+                    "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+                    "ignoreTests": True,
+                }
+            ],
+        },
         {"repository": "westcoder/ack-desk", "baseBranchPatterns": ["develop"]},
         {"repository": "westcoder/westcode-hub", "baseBranchPatterns": ["main"]},
         {"repository": "westcoder/projectory", "baseBranchPatterns": ["develop"]},
@@ -101,11 +117,17 @@ def test_renovate_pilot_config_and_workflow():
     assert vuln_alerts["enabled"] is True
     assert vuln_alerts["groupName"] is None
     assert vuln_alerts["groupSlug"] is None
+    assert vuln_alerts["minimumReleaseAge"] is None
     assert "automerge" not in vuln_alerts
     assert "labels" not in vuln_alerts
     assert vuln_alerts["addLabels"] == ["security", "dependencies"]
     assert vuln_alerts["schedule"] == ["at any time"]
     assert vuln_alerts["automergeSchedule"] == ["at any time"]
+    vuln_groups = {r["groupSlug"]: r for r in vuln_alerts["packageRules"]}
+    assert "@angular/**" in vuln_groups["angular-monorepo"]["matchPackageNames"]
+    assert vuln_groups["angular-monorepo"]["branchTopic"] == "angular-monorepo-vulnerability"
+    assert "shopware/**" in vuln_groups["shopware-monorepo"]["matchPackageNames"]
+    assert "@shopware-ag/**" in vuln_groups["shopware-monorepo"]["matchPackageNames"]
 
     assert renovate["schedule"] == ["* 0-6 * * 1-4"]
     assert renovate["automergeSchedule"] == ["* * * * 1-4"]
@@ -203,6 +225,7 @@ def test_renovate_pilot_config_and_workflow():
     assert "inputs.dry_run == 'lookup'" in major_automerge_step["if"]
     assert 'reviewDecision == "REVIEW_REQUIRED"' in major_automerge_step["run"]
     assert "--label \"major-update\"" in major_automerge_step["run"]
+    assert "if ! MERGE_METHOD=" in major_automerge_step["run"]
     assert "${{" not in major_automerge_step["run"]
 
     for path in (renovate_path, workflow_path, runbook_path):

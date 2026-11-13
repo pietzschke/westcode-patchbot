@@ -395,10 +395,14 @@ unabhängig vom Patchbot-Server.
        `.github/workflows/*.yml` pushen kann, ohne den Sammel-PR zu blockieren)
      - Checks: **Read-only** · Commit statuses: **Read-only** · Metadata: **Read-only**
    - **Where can this app be installed:** „Only on this account“.
-2. App in `westcoder` mit **„Only select repositories“** installieren – aktuell für die 12 Repositories in
-   `deploy/renovate.json` (`ack-desk`, `westcode-hub`, `projectory`, `brockhaus`, `masteroil`, `wyze-agent`,
-   `materialdatenbank`, `ses-service-app`, `ses-sl-sw-sync`, `service-center`, `ses-shop`, `csa`). In allen Repositories mit
-   Review-Pflicht ist `Allow auto-merge` aktiviert und `westcode-renovate` als PR-Bypass (`pull_request`) hinterlegt:
+2. App in `westcoder` mit **„Only select repositories“** installieren – aktuell für den Runner selbst (`westcode-patchbot`,
+   nur `github-actions`) sowie die 12 Anwendungs-Repositories in `deploy/renovate.json` (`ack-desk`, `westcode-hub`,
+   `projectory`, `brockhaus`, `masteroil`, `wyze-agent`, `materialdatenbank`, `ses-service-app`, `ses-sl-sw-sync`,
+   `service-center`, `ses-shop`, `csa`). Für reguläre Releases gilt ein 3-Tage-Cooldown (`minimumReleaseAge: "3 days"`,
+   `minimumReleaseAgeBehaviour: "timestamp-optional"`), während Security-Fixes (`vulnerabilityAlerts`) ohne Wartezeit
+   durchgehen und gekoppelte Monorepos (`@angular/**`, `shopware/**`, `@shopware-ag/**`) auch bei Security-Alerts gemeinsam
+   gruppiert bleiben. In allen Repositories mit Review-Pflicht ist `Allow auto-merge` aktiviert und `westcode-renovate`
+   als PR-Bypass (`pull_request`) hinterlegt:
    - **Non-Major-Security-PRs (`vulnerabilityAlerts` auf Patch/Minor) & Non-Major-Sammel-PR (`renovate/non-major`):**
      werden von Renovate nach grüner CI direkt per API (`platformAutomerge: false`) **ohne manuelles Approval** gemerged.
    - **Major-PRs (inkl. Major-Security-Upgrades) & Python/PHP-Minor-Runtime (`major-update`):** Renovate merged sie nicht

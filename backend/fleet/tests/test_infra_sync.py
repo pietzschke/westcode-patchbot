@@ -4,11 +4,13 @@ import pytest
 from fleet.infra_sync import is_distro_eol, sync_infra_hosts
 from fleet.models import Host
 
+SIBLING_INFRA = Path(__file__).resolve().parents[4] / "westcode-infra"
+
 
 @pytest.mark.django_db
+@pytest.mark.skipif(not (SIBLING_INFRA / "stacks").is_dir(), reason="sibling westcode-infra checkout not present")
 def test_sync_infra_hosts_parses_real_westcode_infra():
-    infra_path = Path("/Users/pietzschke/projects/westcode-infra")
-    hosts = sync_infra_hosts(infra_path)
+    hosts = sync_infra_hosts(SIBLING_INFRA, today=date(2026, 11, 3))
     stack_names = {h.stack_name for h in hosts}
 
     assert len(hosts) == 23
@@ -30,6 +32,51 @@ def test_sync_infra_hosts_parses_real_westcode_infra():
     }
 
 
+@pytest.mark.django_db
+def test_sync_infra_hosts_parses_hetzner_ionos_and_excludes_tiles(tmp_path):
+    stacks = tmp_path / "stacks"
+    for rel, content in {
+        "hetzner-linklama/servers.tf": (
+            'resource "hcloud_server" "linklama" {\n'
+            '  name  = "linklama.westcode.de"\n'
+            '  image = "ubuntu-20.04"\n'
+            "  public_net {\n"
+            "    ipv4_enabled = true\n"
+            "  }\n"
+            "}\n"
+        ),
+        "hetzner-westcode-tiles/servers.tf": (
+            'resource "hcloud_server" "tile_builder" {\n'
+            '  name  = "tiles.westcode.de"\n'
+            '  image = "ubuntu-24.04"\n'
+            "}\n"
+        ),
+        "ionos-westcode/server.tf": (
+            'resource "ionoscloud_cube_server" "dev" {\n'
+            '  name       = "dev.westcode.de"\n'
+            '  image_name = "ubuntu:24.04"\n'
+            "}\n"
+        ),
+    }.items():
+        target = stacks / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+
+    hosts = sync_infra_hosts(tmp_path, today=date(2026, 11, 3))
+    stack_names = {h.stack_name for h in hosts}
+    assert len(hosts) == 2
+    assert "hetzner-westcode-tiles" not in stack_names
+    assert stack_names == {"hetzner-linklama", "ionos-westcode"}
+
+    linklama = Host.objects.get(stack_name="hetzner-linklama")
+    assert linklama.declared_image == "ubuntu-20.04"
+    assert linklama.is_os_eol is True
+
+    ionos = Host.objects.get(stack_name="ionos-westcode")
+    assert ionos.provider == "ionos"
+    assert (ionos.os_distro, ionos.os_version, ionos.is_os_eol) == ("ubuntu", "24.04", False)
+
+
 def test_is_distro_eol_flags_ubuntu_20_04():
     assert is_distro_eol("ubuntu", "20.04", today=date(2026, 11, 3)) is True
     assert is_distro_eol("ubuntu", "24.04", today=date(2026, 11, 3)) is False
@@ -37,9 +84,17 @@ def test_is_distro_eol_flags_ubuntu_20_04():
 
 
 @pytest.mark.django_db
-def test_sync_infra_hosts_preserves_live_reported_os_info_on_null_image_hosts():
-    infra_path = Path("/Users/pietzschke/projects/westcode-infra")
-    sync_infra_hosts(infra_path)
+def test_sync_infra_hosts_preserves_live_reported_os_info_on_null_image_hosts(tmp_path):
+    stack = tmp_path / "stacks" / "hetzner-masteroil"
+    stack.mkdir(parents=True, exist_ok=True)
+    (stack / "servers.tf").write_text(
+        'resource "hcloud_server" "masteroil" {\n'
+        '  name  = "masteroil.westcode.network"\n'
+        "  image = null\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    sync_infra_hosts(tmp_path)
 
     masteroil = Host.objects.get(stack_name="hetzner-masteroil")
     assert masteroil.declared_image is None
@@ -48,7 +103,7 @@ def test_sync_infra_hosts_preserves_live_reported_os_info_on_null_image_hosts():
     masteroil.is_os_eol = True
     masteroil.save(update_fields=["os_distro", "os_version", "is_os_eol"])
 
-    sync_infra_hosts(infra_path)
+    sync_infra_hosts(tmp_path)
     masteroil.refresh_from_db()
     assert masteroil.declared_image is None
     assert masteroil.os_distro == "ubuntu"

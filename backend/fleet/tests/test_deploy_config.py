@@ -461,6 +461,12 @@ def test_ci_workflow_runs_backend_agent_and_frontend_checks():
     assert ci_path.is_file()
     ci = yaml.safe_load(ci_path.read_text(encoding="utf-8"))
     assert ci["permissions"] == {"contents": "read"}
+    uv_step = next(
+        s for s in ci["jobs"]["backend-and-agent"]["steps"]
+        if str(s.get("uses", "")).startswith("astral-sh/setup-uv@")
+    )
+    # astral-sh/setup-uv publishes exact semver tags (e.g. v10.3.3) rather than a floating v10 tag.
+    assert re.fullmatch(r"astral-sh/setup-uv@v\d+\.\d+\.\d+", uv_step["uses"])
     all_runs = "\n".join(
         step["run"]
         for job in ci["jobs"].values()
@@ -470,6 +476,7 @@ def test_ci_workflow_runs_backend_agent_and_frontend_checks():
     assert "${{" not in all_runs
     assert "ruff check" in all_runs
     assert "../agent" in all_runs
+    assert (REPO_ROOT / "ruff.toml").is_file()
     assert "pytest" in all_runs
     assert "../agent/tests" in (REPO_ROOT / "backend" / "pyproject.toml").read_text(encoding="utf-8")
     assert "ng test" in all_runs

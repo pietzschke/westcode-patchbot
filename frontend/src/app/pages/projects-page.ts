@@ -1,366 +1,242 @@
-import { Component, OnInit, computed, effect, inject, signal } from '@angular/core';
-import { DomSanitizer, SafeHtml } from '@angular/platform-browser';
-import { getLogoSvg } from '../core/logos';
-import { GitTargetDto, PatchbotApi, ProjectDto } from '../core/patchbot-api';
+import { NgTemplateOutlet } from '@angular/common';
+import { HttpErrorResponse } from '@angular/common/http';
+import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { apiErrorText } from '../core/api-error';
+import { AuthService } from '../core/auth';
+import { AssetDto, PatchbotApi, TriageProjectDto, TriageProjectsDto } from '../core/patchbot-api';
+
+const DEPLOYMENT_MODES = [
+  { value: 'UNKNOWN', label: 'Unbekannt' },
+  { value: 'CONTAINER', label: 'Container-Image' },
+  { value: 'HOST_CHECKOUT', label: 'Git-Checkout auf Host' },
+  { value: 'NONE', label: 'Wird nicht deployt' },
+];
 
 @Component({
   selector: 'app-projects-page',
   standalone: true,
+  imports: [NgTemplateOutlet],
   template: `
     <main class="page">
       <div class="page-head">
         <div>
-          <h1 class="page-title">Nach Projekt ({{ projects().length || 17 }})</h1>
-          <p class="page-sub">
-            Bündelt zusammengehörige Hosts, Dienste, Container und GitHub-Repositories je Kunden- bzw.
-            Infrastruktur-Projekt (z.&nbsp;B. <strong>Würth</strong> mit <code>mdb.westcode.de</code>,
-            <code>converter.westcode.de</code>, Materialdatenbank und Würth Converter).
-          </p>
+          <h1 class="page-title">Projekte &amp; Zuordnung</h1>
+          <p class="page-sub">Aktive Notion-Projekte mit ihren Repositories, Hosts und Containern.</p>
         </div>
+        @if (auth.isAdmin()) {
+          <button type="button" id="notion-sync-btn" class="btn-secondary btn-standard" style="width:auto;" (click)="syncNotion()">
+            Notion jetzt synchronisieren
+          </button>
+        }
       </div>
+      @if (notice()) {
+        <p class="plan-check-note">{{ notice() }}</p>
+      }
 
-      <div class="workspace">
-        <div>
-          <section class="group-section" aria-label="Jetzt handeln">
-            <div class="group-head">
-              <span>Jetzt handeln · Projekte mit offenen CVEs, EOL-Systemen oder Updates</span>
-              <span class="group-count">{{ actionRequiredProjects().length }} Projekte</span>
-            </div>
-
-            <ul class="service-list" role="listbox" aria-label="Dringende Projekte">
-              @for (proj of actionRequiredProjects(); track proj.slug) {
-                <li
-                  class="service-row"
-                  role="option"
-                  [class.selected]="selectedProject()?.slug === proj.slug"
-                  [attr.aria-selected]="selectedProject()?.slug === proj.slug"
-                  (click)="selectProject(proj)"
-                >
-                  <div
-                    class="svc-logo"
-                    [innerHTML]="renderLogo(proj.logo_key, proj.display_name)"
-                  ></div>
-                  <div class="svc-main">
-                    <div class="svc-title">
-                      {{ proj.display_name }}
-                      @if (proj.has_eol_host) {
-                        <span class="badge-eol" style="margin-left:6px;">EOL</span>
-                      }
-                      @if (proj.has_git_dirty) {
-                        <span class="badge-eol" style="margin-left:6px;background:#fff7ed;color:#c2410c;">git dirty</span>
-                      }
-                    </div>
-                    <div class="svc-sub">
-                      @if (proj.cves_count > 0) {
-                        <span class="crit-text">{{ proj.cves_count }} CVEs</span> ·
-                      }
-                      {{ proj.summary_line }}
-                    </div>
-                  </div>
-                  <div class="svc-version">
-                    <span class="old">{{ proj.hosts.length }} {{ proj.hosts.length === 1 ? 'Host' : 'Hosts' }}</span>
-                    →
-                    <span class="new">{{ proj.services.length }} {{ proj.services.length === 1 ? 'Dienst' : 'Dienste' }}</span>
-                  </div>
-                  <div class="svc-scope">
-                    <span class="dot crit"></span>
-                    <span>{{ proj.prs_count }} PRs · {{ proj.pending_apt_count }} APT</span>
-                  </div>
-                  <div class="svc-chevron">›</div>
-                </li>
-              }
-            </ul>
-          </section>
-
-          <section class="group-section" aria-label="Weitere Projekte">
-            <div class="group-head">
-              <span>Bereit zum Ausrollen / Infrastruktur-Stacks</span>
-              <span class="group-count">{{ readyProjects().length }} Projekte</span>
-            </div>
-
-            <ul class="service-list" role="listbox" aria-label="Weitere Projekte">
-              @for (proj of readyProjects(); track proj.slug) {
-                <li
-                  class="service-row"
-                  role="option"
-                  [class.selected]="selectedProject()?.slug === proj.slug"
-                  [attr.aria-selected]="selectedProject()?.slug === proj.slug"
-                  (click)="selectProject(proj)"
-                >
-                  <div
-                    class="svc-logo"
-                    [innerHTML]="renderLogo(proj.logo_key, proj.display_name)"
-                  ></div>
-                  <div class="svc-main">
-                    <div class="svc-title">{{ proj.display_name }}</div>
-                    <div class="svc-sub">{{ proj.summary_line }}</div>
-                  </div>
-                  <div class="svc-version">
-                    <span class="old">{{ proj.hosts.length }} {{ proj.hosts.length === 1 ? 'Host' : 'Hosts' }}</span>
-                    →
-                    <span class="new">{{ proj.services.length }} {{ proj.services.length === 1 ? 'Dienst' : 'Dienste' }}</span>
-                  </div>
-                  <div class="svc-scope">
-                    <span class="dot hint"></span>
-                    <span>{{ proj.prs_count }} PRs · {{ proj.pending_apt_count }} APT</span>
-                  </div>
-                  <div class="svc-chevron">›</div>
-                </li>
-              }
-            </ul>
-          </section>
-        </div>
-
-        @if (selectedProject(); as proj) {
-          <aside
-            class="plan-stripe-wrap plan-card"
-            [class.crit]="proj.category === 'action_required'"
-            aria-label="Projekt-Details und Runbook"
-          >
-            <div class="plan-panel">
-              <div class="plan-header">
-                <div
-                  class="svc-logo"
-                  style="background:#fff;"
-                  [innerHTML]="renderLogo(proj.logo_key, proj.display_name)"
-                ></div>
-                <div>
-                  <h2 class="plan-title">{{ proj.display_name }}</h2>
-                  <div class="plan-meta">
-                    Stack: <code>{{ proj.slug }}</code> · {{ proj.hosts.length }} Hosts ·
-                    {{ proj.services.length }} Dienste
-                    @if (proj.cves_count > 0) {
-                      · <strong style="color:var(--salmon-700);">{{ proj.cves_count }} CVEs</strong>
+      @if (data(); as d) {
+        <section class="group-section">
+          <div class="group-head">
+            <span class="group-name">Unzugeordnete Assets</span>
+            <span class="group-count">{{ inbox().length }}</span>
+          </div>
+          <ul class="service-list">
+            @for (asset of inbox(); track asset.type + asset.id) {
+              <li class="inbox-row">
+                <div class="finding-main">
+                  <div class="finding-title">{{ asset.name }}</div>
+                  <div class="finding-sub">
+                    {{ typeLabel(asset.type) }}
+                    @if (asset.suggested_project) {
+                      · Vorschlag: {{ asset.suggested_project.name }}
                     }
                   </div>
                 </div>
-              </div>
-
-              <div class="plan-block">
-                <div class="plan-block-title">
-                  <span>1. Zugehörige Hosts im Projekt</span>
-                  <span>{{ proj.hosts.length }} Hosts</span>
-                </div>
-                @for (h of proj.hosts; track h.hostname) {
-                  <div class="plan-item">
-                    <div>
-                      <strong>{{ h.hostname }}</strong>
-                      @if (h.is_os_eol || h.is_eol) {
-                        <span class="badge-eol" style="margin-left:6px;">EOL</span>
-                      }
-                      <span class="plan-item-sub" style="display:block;">
-                        {{ h.distro || (h.os_distro + ' ' + h.os_version) || 'OS ausstehend' }}
-                        @if (h.reboot_required) {
-                          · <strong style="color:var(--salmon-700);">Neustart nötig</strong>
-                        }
-                        · {{ h.container_count ?? h.containers_count ?? 0 }} Container
-                      </span>
-                    </div>
-                    <span style="font-size:11px;font-weight:700;white-space:nowrap;">
-                      {{ h.pending_apt_count ?? 0 }} APT-Pakete
-                    </span>
-                  </div>
+                @if (auth.isAdmin()) {
+                  @if (asset.suggested_project) {
+                    <button type="button" class="btn-link confirm-btn" (click)="confirm(asset)">Vorschlag übernehmen</button>
+                  }
+                  <select class="assign-select" (change)="assignTarget.set(key(asset), $any($event.target).value)">
+                    <option value="">Projekt wählen…</option>
+                    @for (p of d.projects; track p.slug) {
+                      <option [value]="p.slug">{{ p.name }}</option>
+                    }
+                  </select>
+                  <button type="button" class="btn-link assign-btn" (click)="assign(asset)">Zuordnen</button>
                 }
-              </div>
+              </li>
+            } @empty {
+              <li class="empty-state">Alle Assets sind einem Projekt zugeordnet.</li>
+            }
+          </ul>
+        </section>
 
-              <div class="plan-block">
-                <div class="plan-block-title">
-                  <span>2. Dienste &amp; Anwendungen im Projekt</span>
-                  <span>{{ proj.services.length }} Dienste</span>
-                </div>
-                @for (svc of proj.services; track svc.slug) {
-                  <div class="plan-item">
-                    <div>
-                      <strong>{{ svc.display_name }}</strong>
-                      @if (svc.highest_cve_id) {
-                        <span class="badge-eol" style="margin-left:6px;">{{ svc.highest_cve_id }}</span>
-                      }
-                      <span class="plan-item-sub" style="display:block;">
-                        {{ svc.summary_line }}
-                      </span>
-                    </div>
-                    <span style="white-space:nowrap;font-size:11px;">
-                      {{ svc.current_version_summary || 'main' }} → <strong>{{ svc.target_version }}</strong>
-                    </span>
-                  </div>
-                } @empty {
-                  <div class="plan-item">
-                    <span class="plan-item-sub">Reiner Infrastruktur-/System-Host ohne eigene App-Pipeline</span>
-                  </div>
+        @for (p of d.projects; track p.slug) {
+          <section class="group-section project-card" [attr.data-project]="p.slug">
+            <div class="group-head">
+              <span class="group-name">
+                {{ p.name }}
+                @if (p.is_internal) {
+                  <span class="type-badge">intern</span>
                 }
-              </div>
-
-              <div class="plan-block">
-                <div class="plan-block-title">
-                  <span>3. Offene GitHub-PRs im Projekt</span>
-                  <span style="color:var(--success);">{{ projectPrs(proj).length }} PRs</span>
-                </div>
-                @for (gt of projectPrs(proj).slice(0, 8); track gt.repo_full_name + gt.file_path + gt.pr_number) {
-                  <div class="plan-item">
-                    <div>
-                      <strong>{{ gt.repo_full_name }}</strong>
-                      <span class="plan-item-sub" style="display:block;">
-                        {{ gt.file_path }}
-                        @if (gt.pr_number && gt.pr_url) {
-                          ·
-                          <a
-                            [href]="gt.pr_url"
-                            target="_blank"
-                            rel="noopener"
-                            style="color:var(--bluefly-600);text-decoration:none;font-weight:600;"
-                          >
-                            PR #{{ gt.pr_number }} ↗
-                          </a>
-                        }
-                      </span>
-                    </div>
-                    <span style="color:var(--bluefly-500);font-weight:700;white-space:nowrap;">
-                      Bereit zum Merge
-                    </span>
-                  </div>
-                } @empty {
-                  <div class="plan-item">
-                    <span class="plan-item-sub">Keine offenen GitHub-PRs für dieses Projekt</span>
-                  </div>
+                @if (p.notion_missing) {
+                  <span class="sev-badge notion-missing" data-sev="HIGH">Nicht mehr in Notion</span>
                 }
-              </div>
-
-              <div class="plan-block">
-                <div class="plan-block-title">
-                  <span>4. Manuelles Projekt-Runbook</span>
-                  <span>Kein Auto-Patching</span>
-                </div>
-                <pre
-                  style="background:var(--neutral-900);color:#fff;padding:10px;border-radius:6px;font-size:11px;overflow-x:auto;margin:0;line-height:1.45;"
-                ><code>{{ buildProjectRunbook(proj) }}</code></pre>
-              </div>
-
-              @if (copiedFeedback()) {
-                <div class="plan-block" style="border-color:var(--success);background:#f0fdf4;">
-                  <span style="font-size:12px;font-weight:600;color:var(--success);">
-                    ✓ Projekt-Runbook in die Zwischenablage kopiert
-                  </span>
-                </div>
-              }
-
-              <button
-                type="button"
-                id="execute-plan-btn"
-                class="btn-primary"
-                (click)="copyProjectRunbook(proj)"
-              >
-                Projekt-Runbook kopieren ({{ proj.hosts.length }} Hosts · {{ proj.services.length }} Dienste)
-              </button>
-
-              <p class="plan-check-note">
-                Alle Wartungsbefehle für die Hosts und Dienste dieses Projekts werden in deine
-                Zwischenablage kopiert, damit du sie selbst im eigenen Terminal ausführen kannst.
-              </p>
+              </span>
+              <span class="group-count">
+                {{ p.notion_status || '–' }} · Owner: {{ p.owner?.name ?? 'keiner' }} · {{ p.open_findings }} offen
+                @if (auth.isAdmin()) {
+                  <label class="toggle monitoring-toggle">
+                    <input type="checkbox" [checked]="p.is_monitored" (click)="toggleMonitoring(p.slug, !p.is_monitored)" />
+                    überwacht
+                  </label>
+                } @else if (!p.is_monitored) {
+                  · nicht überwacht
+                }
+              </span>
             </div>
-          </aside>
+            <ul class="service-list">
+              @for (r of p.repositories; track r.id) {
+                <li class="asset-row" [attr.data-asset]="key(r)">
+                  <span class="finding-title">{{ r.name }}</span>
+                  @if (auth.isAdmin()) {
+                    <select class="deployment-select" (change)="setDeployment(r, $any($event.target).value)">
+                      @for (m of deploymentModes; track m.value) {
+                        <option [value]="m.value" [selected]="m.value === r.deployment_mode">{{ m.label }}</option>
+                      }
+                    </select>
+                  } @else {
+                    <span class="finding-sub">{{ deploymentLabel(r.deployment_mode) }}</span>
+                  }
+                  <ng-container *ngTemplateOutlet="assignedActions; context: { $implicit: r, project: p.slug }" />
+                </li>
+              }
+              @for (h of p.hosts; track h.id) {
+                <li class="asset-row" [attr.data-asset]="key(h)">
+                  <span>{{ h.name }}</span><span class="finding-sub">Host</span>
+                  <ng-container *ngTemplateOutlet="assignedActions; context: { $implicit: h, project: p.slug }" />
+                </li>
+              }
+              @for (c of p.containers; track c.id) {
+                <li class="asset-row" [attr.data-asset]="key(c)">
+                  <span>{{ c.name }}</span>
+                  <span class="finding-sub">Container{{ c.image ? ' · ' + c.image : '' }}</span>
+                  <ng-container *ngTemplateOutlet="assignedActions; context: { $implicit: c, project: p.slug }" />
+                </li>
+              }
+              @if (p.repositories.length === 0 && p.hosts.length === 0 && p.containers.length === 0) {
+                <li class="empty-state">Noch keine Assets zugeordnet.</li>
+              }
+            </ul>
+          </section>
         }
-      </div>
+      } @else {
+        <p class="page-sub">Lade Projekte…</p>
+      }
+
+      <ng-template #assignedActions let-asset let-current="project">
+        @if (auth.isAdmin()) {
+          <span class="asset-actions">
+            <select class="reassign-select" [attr.aria-label]="asset.name + ' verschieben'"
+              (change)="assignTarget.set(key(asset), $any($event.target).value)">
+              <option value="">Verschieben nach…</option>
+              @for (other of otherProjects(current); track other.slug) {
+                <option [value]="other.slug">{{ other.name }}</option>
+              }
+            </select>
+            <button type="button" class="btn-link move-btn" (click)="assign(asset)">Verschieben</button>
+            <button type="button" class="btn-link unassign-btn" (click)="unassign(asset)">Zuordnung lösen</button>
+          </span>
+        }
+      </ng-template>
     </main>
   `,
 })
 export class ProjectsPage implements OnInit {
   private readonly api = inject(PatchbotApi);
-  private readonly sanitizer = inject(DomSanitizer);
+  readonly auth = inject(AuthService);
+  readonly deploymentModes = DEPLOYMENT_MODES;
+  readonly data = signal<TriageProjectsDto | null>(null);
+  readonly notice = signal('');
+  readonly assignTarget = new Map<string, string>();
 
-  readonly projects = signal<ProjectDto[]>([]);
-  readonly selectedSlug = signal<string>('');
-  readonly copiedFeedback = signal<boolean>(false);
-
-  readonly actionRequiredProjects = computed(() =>
-    this.projects().filter((p) => p.category === 'action_required'),
-  );
-
-  readonly readyProjects = computed(() =>
-    this.projects().filter((p) => p.category !== 'action_required'),
-  );
-
-  readonly selectedProject = computed<ProjectDto | null>(() => {
-    const list = this.projects();
-    if (list.length === 0) {
-      return null;
-    }
-    const slug = this.selectedSlug();
-    return list.find((p) => p.slug === slug) ?? list[0];
+  readonly inbox = computed<AssetDto[]>(() => {
+    const u = this.data()?.unassigned_assets;
+    return u ? [...u.repositories, ...u.hosts, ...u.containers] : [];
   });
 
-  constructor() {
-    effect(() => {
-      const tick = this.api.refreshTick();
-      if (tick > 0) {
-        this.loadProjects();
-      }
-    });
-  }
-
   ngOnInit(): void {
-    this.loadProjects();
+    this.reload();
   }
 
-  loadProjects(): void {
-    this.api.listProjects().subscribe((items) => {
-      this.projects.set(items);
-      if (items.length > 0 && !this.selectedSlug()) {
-        const wuerth = items.find((p) => p.slug === 'hetzner-wuerth');
-        this.selectedSlug.set((wuerth ?? items[0]).slug);
-      }
+  reload(): void {
+    this.api.listTriageProjects().subscribe((d) => this.data.set(d));
+  }
+
+  key(asset: AssetDto): string {
+    return `${asset.type}:${asset.id}`;
+  }
+
+  typeLabel(type: string): string {
+    return type === 'repository' ? 'Repository' : type === 'host' ? 'Host' : 'Container';
+  }
+
+  otherProjects(currentSlug: string): TriageProjectDto[] {
+    return (this.data()?.projects ?? []).filter((p) => p.slug !== currentSlug);
+  }
+
+  deploymentLabel(mode?: string): string {
+    return DEPLOYMENT_MODES.find((m) => m.value === mode)?.label ?? 'Unbekannt';
+  }
+
+  confirm(asset: AssetDto): void {
+    this.api.confirmSuggestion(asset.type, asset.id).subscribe({
+      next: () => this.reload(),
+      error: (err: HttpErrorResponse) => this.notice.set(apiErrorText(err, 'Vorschlag konnte nicht übernommen werden.')),
     });
   }
 
-  selectProject(proj: ProjectDto): void {
-    this.selectedSlug.set(proj.slug);
-    this.copiedFeedback.set(false);
-  }
-
-  renderLogo(key: string, name: string): SafeHtml {
-    return this.sanitizer.bypassSecurityTrustHtml(getLogoSvg(key, name));
-  }
-
-  projectPrs(proj: ProjectDto): GitTargetDto[] {
-    const all: GitTargetDto[] = [];
-    for (const svc of proj.services) {
-      for (const gt of svc.git_targets ?? []) {
-        all.push(gt);
-      }
+  assign(asset: AssetDto): void {
+    const slug = this.assignTarget.get(this.key(asset));
+    if (!slug) {
+      this.notice.set('Bitte zuerst ein Projekt wählen.');
+      return;
     }
-    return all;
+    this.saveAssignment(asset, slug);
   }
 
-  buildProjectRunbook(proj: ProjectDto): string {
-    const lines: string[] = [];
-    lines.push(`# === Projekt: ${proj.display_name} (${proj.slug}) ===`);
-    for (const h of proj.hosts) {
-      lines.push(`# Host: ${h.hostname} (${h.distro || h.os_distro + ' ' + h.os_version})`);
-      if ((h.pending_apt_count ?? 0) > 0) {
-        lines.push(
-          `ssh root@${h.hostname} "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -y"`,
-        );
-      }
-      for (const c of h.containers ?? []) {
-        if (c.working_dir && c.working_dir.startsWith('/opt/')) {
-          lines.push(
-            `ssh root@${h.hostname} "cd ${c.working_dir} && git status --porcelain && git pull --ff-only && docker compose pull && docker compose up -d"`,
-          );
-          break;
-        }
-      }
-    }
-    return lines.join('\n');
+  unassign(asset: AssetDto): void {
+    this.saveAssignment(asset, null);
   }
 
-  copyProjectRunbook(proj: ProjectDto): void {
-    const text = this.buildProjectRunbook(proj);
-    if (text && typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(text).then(
-        () => this.copiedFeedback.set(true),
-        () => {},
-      );
-    } else {
-      this.copiedFeedback.set(true);
-    }
+  private saveAssignment(asset: AssetDto, slug: string | null): void {
+    this.api.assignAsset(asset.type, asset.id, slug).subscribe({
+      next: () => {
+        this.assignTarget.delete(this.key(asset));
+        this.notice.set('');
+        this.reload();
+      },
+      error: (err: HttpErrorResponse) => this.notice.set(apiErrorText(err, 'Zuordnung fehlgeschlagen.')),
+    });
+  }
+
+  toggleMonitoring(slug: string, monitored: boolean): void {
+    this.api.setMonitoring(slug, monitored).subscribe({
+      next: () => this.reload(),
+      error: () => this.notice.set('Überwachung konnte nicht geändert werden.'),
+    });
+  }
+
+  setDeployment(repo: AssetDto, mode: string): void {
+    this.api.setDeploymentMode(repo.id, mode).subscribe({
+      next: () => this.notice.set(`Deployment-Art von ${repo.name} gespeichert.`),
+      error: () => this.notice.set('Deployment-Art konnte nicht gespeichert werden.'),
+    });
+  }
+
+  syncNotion(): void {
+    this.api.syncNotion().subscribe({
+      next: () => this.notice.set('Notion-Sync gestartet.'),
+      error: () => this.notice.set('Notion-Sync läuft bereits oder ist fehlgeschlagen.'),
+    });
   }
 }

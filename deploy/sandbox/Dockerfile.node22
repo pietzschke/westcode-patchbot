@@ -1,0 +1,30 @@
+# Code-patching sandbox for npm projects (spec §5.5), tag: patchbot-sandbox:node22
+#   docker build -t patchbot-sandbox:node22 -f deploy/sandbox/Dockerfile.node22 deploy/sandbox
+#
+# research.sandbox starts it with --read-only, --cap-drop=ALL, no-new-privileges, --user=1000:1000,
+# a tmpfs on /tmp and only the worktree mounted at /work. The image holds no credentials; the only
+# way out is the allow-listing egress proxy on the internal network patchbot-sandbox-egress.
+FROM node:22-trixie-slim
+
+# Drop package managers the sandbox never runs (allow-list: npm ci --ignore-scripts, npm test/build/lint).
+RUN rm -rf /usr/local/bin/corepack /usr/local/lib/node_modules/corepack \
+        /usr/local/bin/yarn /usr/local/bin/yarnpkg /opt/yarn-*
+
+# Root filesystem is read-only at runtime: everything writable lives under /tmp.
+ENV HOME=/tmp \
+    npm_config_cache=/tmp/.npm \
+    npm_config_ignore_scripts=true \
+    npm_config_audit=false \
+    npm_config_fund=false \
+    npm_config_update_notifier=false \
+    HTTP_PROXY=http://egress-proxy:3128 \
+    HTTPS_PROXY=http://egress-proxy:3128 \
+    http_proxy=http://egress-proxy:3128 \
+    https_proxy=http://egress-proxy:3128 \
+    NO_PROXY=localhost,127.0.0.1 \
+    no_proxy=localhost,127.0.0.1
+
+WORKDIR /work
+# uid/gid 1000 is the image's "node" user; it matches the worker user that owns the worktree.
+USER 1000:1000
+CMD ["sleep", "infinity"]

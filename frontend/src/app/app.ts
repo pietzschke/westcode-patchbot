@@ -1,6 +1,17 @@
-import { Component, inject, signal } from '@angular/core';
+import { Component, DestroyRef, inject, signal } from '@angular/core';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
-import { PatchbotApi } from './core/patchbot-api';
+import { HttpErrorResponse } from '@angular/common/http';
+import { Subscription, switchMap, timer } from 'rxjs';
+import { AuthService } from './core/auth';
+import { PatchbotApi, ScanStatusDto } from './core/patchbot-api';
+
+export const SCAN_POLL_MS = 5000;
+const SCAN_RESULT_LABELS: Record<string, string> = {
+  OK: 'erfolgreich',
+  PARTIAL: 'teilweise fehlgeschlagen',
+  FAILED: 'fehlgeschlagen',
+  RUNNING: 'beendet',
+};
 
 @Component({
   selector: 'app-root',
@@ -35,36 +46,31 @@ import { PatchbotApi } from './core/patchbot-api';
         <span style="color:var(--neutral-600);font-weight:600;">Patchbot</span>
       </div>
       <nav class="nav-links" aria-label="Bereiche">
-        <a
-          class="nav-link"
-          routerLink="/"
-          routerLinkActive="active"
-          [routerLinkActiveOptions]="{ exact: true }"
-        >
-          Nach Dienst
+        <a class="nav-link" routerLink="/" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: true }">
+          Triage-Dashboard
         </a>
-        <a class="nav-link" routerLink="/projects" routerLinkActive="active">
-          Nach Projekt
-        </a>
-        <a class="nav-link" routerLink="/hosts" routerLinkActive="active">
-          Nach Host (23)
-        </a>
-        <a class="nav-link" routerLink="/rollouts" routerLinkActive="active">
-          Rollout-Historie
-        </a>
+        <a class="nav-link" routerLink="/projects" routerLinkActive="active">Projekte &amp; Zuordnung</a>
+        <a class="nav-link" routerLink="/hosts" routerLinkActive="active">Live-Hosts</a>
+        <a class="nav-link" routerLink="/team" routerLinkActive="active">Team</a>
       </nav>
       <div class="fleet-health" style="display:flex;align-items:center;gap:12px;">
-        <span class="dot ok"></span>
-        <span>{{ syncStatusText() }}</span>
+        @if (scanStatus()) {
+          <span class="scan-status">{{ scanStatus() }}</span>
+        }
         <button
           type="button"
+          id="run-scan-btn"
           class="btn-secondary btn-standard"
           style="width:auto;margin:0;padding:6px 12px;font-size:12px;"
-          [disabled]="isSyncing()"
-          (click)="runSync()"
+          [disabled]="scanBusy()"
+          (click)="runScan()"
         >
-          {{ isSyncing() ? 'Synchronisiere GitHub & Trivy…' : 'Jetzt synchronisieren' }}
+          Scan &amp; Sync starten
         </button>
+        @if (auth.me(); as me) {
+          <span class="user-badge" [title]="me.email">{{ me.name }}</span>
+          <button type="button" id="logout-btn" class="btn-link" (click)="logout()">Abmelden</button>
+        }
       </div>
     </header>
     <router-outlet />
@@ -72,22 +78,70 @@ import { PatchbotApi } from './core/patchbot-api';
 })
 export class App {
   private readonly api = inject(PatchbotApi);
-  readonly isSyncing = signal<boolean>(false);
-  readonly syncStatusText = signal<string>('23 Hosts · GitHub & Trivy gekoppelt');
+  readonly auth = inject(AuthService);
+  /** True from the click until the queued daily_scan job has finished (spec §8.1). */
+  readonly scanBusy = signal(false);
+  readonly scanStatus = signal('');
+  private poll: Subscription | null = null;
 
-  runSync(): void {
-    this.isSyncing.set(true);
-    this.api.triggerLiveSync().subscribe({
-      next: (res) => {
-        this.isSyncing.set(false);
-        this.syncStatusText.set(
-          `${res.hosts_count} Hosts · ${res.services_count} Dienste · ${res.prs_count} PRs · ${res.vulns_count} CVEs`,
-        );
+  constructor() {
+    inject(DestroyRef).onDestroy(() => this.poll?.unsubscribe());
+    this.api.getScanStatus().subscribe({ next: (s) => this.applyStatus(s, false), error: () => undefined });
+  }
+
+  runScan(): void {
+    this.scanBusy.set(true);
+    this.api.runScan().subscribe({
+      next: () => {
+        this.scanStatus.set('Scan gestartet …');
+        this.startPolling();
       },
-      error: () => {
-        this.isSyncing.set(false);
-        this.syncStatusText.set('Synchronisation fehlgeschlagen');
+      error: (err: HttpErrorResponse) => {
+        if (err.status === 409) {
+          this.scanStatus.set('Ein Scan läuft bereits.');
+          this.startPolling();
+        } else {
+          this.scanBusy.set(false);
+          this.scanStatus.set('Scan konnte nicht gestartet werden.');
+        }
       },
     });
+  }
+
+  logout(): void {
+    void this.auth.logout();
+  }
+
+  private startPolling(): void {
+    this.poll?.unsubscribe();
+    this.poll = timer(SCAN_POLL_MS, SCAN_POLL_MS)
+      .pipe(switchMap(() => this.api.getScanStatus()))
+      .subscribe({
+        next: (s) => this.applyStatus(s, true),
+        error: () => {
+          this.scanBusy.set(false);
+          this.scanStatus.set('Scan-Status unbekannt – bitte Seite neu laden.');
+        },
+      });
+  }
+
+  private applyStatus(status: ScanStatusDto, polling: boolean): void {
+    const run = status.scan_run;
+    if (status.running) {
+      this.scanBusy.set(true);
+      const progress = run?.status === 'RUNNING' ? ` (${run.targets_done} Ziele gescannt)` : '';
+      this.scanStatus.set(`Scan läuft …${progress}`);
+      if (!polling) {
+        this.startPolling();
+      }
+      return;
+    }
+    this.poll?.unsubscribe();
+    this.poll = null;
+    this.scanBusy.set(false);
+    if (polling) {
+      const result = run ? SCAN_RESULT_LABELS[run.status] ?? run.status : 'beendet';
+      this.scanStatus.set(`Scan abgeschlossen: ${result}.`);
+    }
   }
 }

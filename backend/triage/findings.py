@@ -1,0 +1,210 @@
+"""Deduplicating upsert of scan candidates into findings (spec v2.1 §5.3)."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime
+
+from django.db import transaction
+from django.utils import timezone
+
+from triage.candidates import Candidate
+from triage.clock import deadline_for, uses_wall_clock
+from triage.models import OPEN_STATES, PARKED_STATES, SEVERITY_RANK, TERMINAL_STATES, Finding, FindingEvent
+from triage.versions import compare_versions, max_version
+
+
+@dataclass
+class UpsertResult:
+    finding: Finding
+    created: bool = False
+    target_version_raised: bool = False
+    muted: bool = False
+
+
+def log_event(finding: Finding, *, actor=None, source: str, from_state: str, to_state: str, note: str = "", at=None):
+    return FindingEvent.objects.create(
+        finding=finding,
+        at=at or timezone.now(),
+        actor=actor,
+        source=source,
+        from_state=from_state,
+        to_state=to_state,
+        note=note,
+    )
+
+
+def _max_severity(*severities: str) -> str:
+    return max((s or "UNKNOWN" for s in severities), key=lambda s: SEVERITY_RANK.get(s, 0))
+
+
+def _stage_start(finding: Finding) -> datetime:
+    if finding.state == "PR_MERGED_WAITING_LIVE" and finding.pr_merged_at:
+        return finding.pr_merged_at
+    if finding.state in ("IN_PROGRESS", "PR_MERGED_WAITING_LIVE") and finding.acknowledged_at:
+        return finding.acknowledged_at
+    return finding.discovered_at
+
+
+def tighten_to_wall_clock(finding: Finding) -> bool:
+    """KEV-listed CRITICAL findings run on wall-clock time in every open stage (spec §6.2, D-2). Called when a
+    finding becomes KEV+CRITICAL; only ever shortens the current deadline. The caller saves."""
+    if finding.state not in OPEN_STATES or not uses_wall_clock(finding.highest_severity, finding.kev_listed):
+        return False
+    deadline = deadline_for(stage=finding.state, complexity=finding.complexity, severity=finding.highest_severity,
+                            kev_listed=True, start=_stage_start(finding))
+    if finding.deadline_at is not None and finding.deadline_at <= deadline:
+        return False
+    finding.deadline_at = deadline
+    return True
+
+
+def _merge_into(finding: Finding, candidate: Candidate, cve_ids: list[str], severity: str, target: str) -> bool:
+    """Merge a rescan into an existing finding; returns True if the target version was raised."""
+    old_target = finding.target_version
+    was_wall_clock = uses_wall_clock(finding.highest_severity, finding.kev_listed)
+    finding.vulnerability_ids = sorted(set(finding.vulnerability_ids) | set(cve_ids))
+    finding.highest_severity = _max_severity(finding.highest_severity, severity)
+    if not was_wall_clock:
+        tighten_to_wall_clock(finding)  # severity rose to CRITICAL on an already KEV-listed finding
+    finding.target_version = max_version(candidate.ecosystem, [old_target, target])
+    finding.current_version = candidate.current_version or finding.current_version
+    finding.save()
+    return bool(old_target) and compare_versions(candidate.ecosystem, finding.target_version, old_target) > 0
+
+
+def _start_new(finding: Finding, now: datetime) -> None:
+    finding.state = "NEW"
+    finding.discovered_at = now
+    finding.acknowledged_at = None
+    finding.extended_in_stage = ""
+    finding.escalated_stage = 0
+    finding.deadline_at = deadline_for(
+        stage="NEW",
+        complexity=finding.complexity,
+        severity=finding.highest_severity,
+        kev_listed=finding.kev_listed,
+        start=now,
+    )
+
+
+def clear_dismissal(finding: Finding) -> None:
+    finding.dismissal_mode = ""
+    finding.dismissal_reason = ""
+    finding.dismissed_by = None
+    finding.dismissed_at = None
+    finding.dismissed_severity = ""
+    finding.dismissed_kev_listed = False
+    finding.snoozed_until = None
+
+
+def reopen_state(finding: Finding, now: datetime) -> str:
+    """Re-enter the active lifecycle: a new NEW cycle, or SUPPRESSED_UNMONITORED while the project is not
+    monitored (it becomes NEW once monitoring is re-enabled). Returns the new state; the caller saves."""
+    if not finding.project.is_monitored:
+        finding.state = "SUPPRESSED_UNMONITORED"
+        return finding.state
+    _start_new(finding, now)
+    return finding.state
+
+
+def return_to_work(finding: Finding, *, now: datetime, note: str) -> None:
+    """A merged fix does not cover the cluster (new CVE / CVE still on the merged branch): leave
+    PR_MERGED_WAITING_LIVE before live verification can close it on the old merge commit (spec §2 Anti-Goal 4).
+
+    The merge and PR data are cleared so a new PR for the current target version is prepared and the old
+    merged PR cannot move the finding back; triage runs again for the new target version."""
+    previous = finding.state
+    finding.merge_commit_sha = ""
+    finding.pr_merged_at = None
+    finding.pr_number, finding.pr_url, finding.pr_source, finding.pr_is_draft = None, "", "", False
+    finding.pr_target_version = finding.pr_head_ref = ""
+    finding.ci_status = ""
+    finding.verification_snapshot = []
+    finding.verification_checked_at = None
+    finding.triage_status = "UNTRIAGED"
+    finding.extended_in_stage = ""
+    if finding.acknowledged_at is not None:
+        finding.state = "IN_PROGRESS"
+        finding.deadline_at = deadline_for(
+            stage="IN_PROGRESS",
+            complexity=finding.complexity,
+            severity=finding.highest_severity,
+            kev_listed=finding.kev_listed,
+            start=now,
+        )
+        finding.escalated_stage = min(finding.escalated_stage, 1)  # stage 2 (IN_PROGRESS) may escalate again
+    else:
+        _start_new(finding, now)
+    finding.save()
+    log_event(finding, source="SYSTEM", from_state=previous, to_state=finding.state, note=note, at=now)
+
+
+@transaction.atomic
+def upsert_finding(candidate: Candidate, *, now: datetime | None = None) -> UpsertResult:
+    now = now or timezone.now()
+    cve_ids = sorted({v.id for v in candidate.vulns})
+    severity = _max_severity(*(v.severity for v in candidate.vulns)) if candidate.vulns else "UNKNOWN"
+    target = max_version(candidate.ecosystem, [v.fixed_version for v in candidate.vulns])
+    same_key = Finding.objects.select_for_update().filter(
+        project=candidate.project,
+        layer=candidate.layer,
+        target_ref=candidate.target_ref,
+        ecosystem=candidate.ecosystem,
+        package_name=candidate.package_name,
+    )
+
+    open_finding = same_key.filter(state__in=OPEN_STATES).first()
+    if open_finding is not None:
+        raised = _merge_into(open_finding, candidate, cve_ids, severity, target)
+        if raised:
+            # Spec §5.3: timers stay; the new target needs a fresh triage (and possibly a new PR).
+            open_finding.triage_status = "UNTRIAGED"
+            open_finding.save(update_fields=["triage_status", "updated_at"])
+            log_event(open_finding, source="SYSTEM", from_state=open_finding.state, to_state=open_finding.state,
+                      note=f"Zielversion auf {open_finding.target_version} angehoben (neue CVE).", at=now)
+            if open_finding.state == "PR_MERGED_WAITING_LIVE":
+                return_to_work(open_finding, now=now, note=(
+                    f"Der gemergte Fix reicht nicht: neue CVE erfordert {open_finding.target_version}."))
+        return UpsertResult(open_finding, target_version_raised=raised)
+
+    parked = same_key.filter(state__in=PARKED_STATES).order_by("-id").first()
+    if parked is not None:
+        known = set(parked.vulnerability_ids)
+        _merge_into(parked, candidate, cve_ids, severity, target)
+        if parked.state == "DISMISSED" and not set(cve_ids) <= known:
+            previous = parked.state
+            clear_dismissal(parked)
+            reopen_state(parked, now)
+            parked.save()
+            log_event(parked, source="SYSTEM", from_state=previous, to_state=parked.state,
+                      note="Neue CVE für ein als „nicht betroffen“ markiertes Paket.", at=now)
+            return UpsertResult(parked)
+        if parked.state == "FILTERED_IRRELEVANT":
+            # Not muted: the pipeline re-evaluates filtered findings against fresh signals (spec §5.4).
+            return UpsertResult(parked)
+        return UpsertResult(parked, muted=True)
+
+    previous = same_key.filter(state__in=TERMINAL_STATES).order_by("-id").first()
+    finding = Finding(
+        project=candidate.project,
+        layer=candidate.layer,
+        target_ref=candidate.target_ref,
+        repository=candidate.repository,
+        host=candidate.host,
+        image_ref=candidate.image_ref,
+        ecosystem=candidate.ecosystem,
+        package_name=candidate.package_name,
+        current_version=candidate.current_version,
+        target_version=target,
+        vulnerability_ids=cve_ids,
+        highest_severity=severity,
+        regression_of=previous,
+        triage_status="UNTRIAGED",
+        complexity="COMPLEX",
+    )
+    _start_new(finding, now)
+    finding.save()
+    log_event(finding, source="SYSTEM", from_state="", to_state="NEW",
+              note="Regression nach Live-Verifikation." if previous else "Neu entdeckt.", at=now)
+    return UpsertResult(finding, created=True)

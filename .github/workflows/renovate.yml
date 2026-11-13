@@ -1,0 +1,333 @@
+name: Renovate
+
+"on":
+  schedule:
+    # Täglich (Mo–So) 02:00 & 03:00 UTC: Security jeden Tag; non-major & major nur Mo–Do (gesteuert über renovate.json schedule).
+    - cron: "0 2 * * *"
+    - cron: "0 3 * * *"
+    # Täglich (Mo–So) 11:00 & 12:00 UTC (12:00 / 13:00 MEZ): Mittagslauf für Security-PRs & Auto-Merge.
+    - cron: "0 11 * * *"
+    - cron: "0 12 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry-run mode ('full' previews planned PRs in logs; 'off' creates/merges PRs)"
+        required: false
+        type: choice
+        options:
+          - "full"
+          - "lookup"
+          - "off"
+        default: "full"
+      repositories:
+        description: "Optional comma-separated subset of repos (e.g. 'ack-desk,westcode-hub,projectory'; empty = all)"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: renovate
+  cancel-in-progress: false
+
+jobs:
+  renovate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout configuration
+        uses: actions/checkout@v6
+
+      - name: Mint GitHub App installation token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.RENOVATE_APP_ID }}
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+          owner: westcoder
+
+      - name: Configure Renovate bot identity and optional dry-run
+        id: bot-env
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          DRY_RUN_MODE: ${{ github.event_name == 'workflow_dispatch' && (inputs.dry_run == 'full' || inputs.dry_run == 'lookup') && inputs.dry_run || '' }}
+          REPO_FILTER: ${{ github.event_name == 'workflow_dispatch' && inputs.repositories || '' }}
+        run: |
+          set -euo pipefail
+          BOT_ID="$(gh api "users/${APP_SLUG}%5Bbot%5D" --jq .id)"
+          test -n "${BOT_ID}"
+          echo "git_author=${APP_SLUG}[bot] <${BOT_ID}+${APP_SLUG}[bot]@users.noreply.github.com>" >> "$GITHUB_OUTPUT"
+          if [ -n "${DRY_RUN_MODE}" ]; then
+            echo "RENOVATE_DRY_RUN=${DRY_RUN_MODE}" >> "$GITHUB_ENV"
+          fi
+          if [ -n "${REPO_FILTER}" ]; then
+            jq --arg repos "${REPO_FILTER}" '
+              ($repos | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))) as $allow
+              | .repositories |= map(
+                  select(
+                    .repository as $r
+                    | ($allow | index($r)) != null
+                      or ($allow | index($r | sub("^westcoder/"; ""))) != null
+                  )
+                )
+            ' deploy/renovate.json > deploy/renovate.filtered.json
+            MATCHED="$(jq '.repositories | length' deploy/renovate.filtered.json)"
+            if [ "${MATCHED}" -eq 0 ]; then
+              echo "::error::No repositories in deploy/renovate.json matched '${REPO_FILTER}'"
+              exit 1
+            fi
+            mv deploy/renovate.filtered.json deploy/renovate.json
+            echo "Filtered run to ${MATCHED} repository/repositories:"
+            jq -r '.repositories[].repository' deploy/renovate.json
+          fi
+          INSTALLED_REPOS="$(gh api /installation/repositories --paginate --jq '.repositories[].full_name')"
+          for CFG_REPO in $(jq -r '.repositories[].repository' deploy/renovate.json); do
+            if ! grep -Fxq "${CFG_REPO}" <<<"${INSTALLED_REPOS}"; then
+              echo "::warning::Repository ${CFG_REPO} is in deploy/renovate.json but not yet enabled in the GitHub App installation — skipping until enabled"
+            fi
+          done
+          jq --arg inst "${INSTALLED_REPOS}" '
+            ($inst | split("\n") | map(select(length > 0))) as $installed
+            | .repositories |= map(select(.repository as $r | ($installed | index($r)) != null))
+          ' deploy/renovate.json > deploy/renovate.installed.json
+          if [ "$(jq '.repositories | length' deploy/renovate.installed.json)" -eq 0 ]; then
+            echo "::error::None of the selected repositories are enabled in the GitHub App installation yet"
+            exit 1
+          fi
+          mv deploy/renovate.installed.json deploy/renovate.json
+
+      - name: Configure registry credentials (AWS CodeArtifact OIDC & Shopware)
+        env:
+          ROLE_ARN: arn:aws:iam::069962555850:role/westcode-infra/github-renovate-codeartifact-read
+          AWS_DEFAULT_REGION: eu-central-1
+          SHOPWARE_PACKAGES_TOKEN: ${{ secrets.SHOPWARE_PACKAGES_TOKEN }}
+        run: |
+          set -euo pipefail
+          OIDC_TOKEN="$(curl -fsSL \
+            -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com" | jq -r .value)"
+          if ! CREDS="$(aws sts assume-role-with-web-identity \
+            --role-arn "${ROLE_ARN}" \
+            --role-session-name "renovate-${GITHUB_RUN_ID}" \
+            --web-identity-token "${OIDC_TOKEN}" \
+            --duration-seconds 3600 \
+            --query Credentials \
+            --output json 2>&1)"; then
+            echo "::error::Could not assume ${ROLE_ARN}"
+            echo "${CREDS}"
+            python3 - "${OIDC_TOKEN}" <<'CLAIMS'
+          import base64, json, sys
+          payload = sys.argv[1].split(".")[1]
+          payload += "=" * (-len(payload) % 4)
+          claims = json.loads(base64.urlsafe_b64decode(payload))
+          print(json.dumps({k: claims[k] for k in ("sub", "aud", "repository", "ref") if k in claims}, indent=2))
+          CLAIMS
+            exit 1
+          fi
+          AWS_ACCESS_KEY_ID="$(jq -r .AccessKeyId <<<"${CREDS}")"
+          AWS_SECRET_ACCESS_KEY="$(jq -r .SecretAccessKey <<<"${CREDS}")"
+          AWS_SESSION_TOKEN="$(jq -r .SessionToken <<<"${CREDS}")"
+          echo "::add-mask::${AWS_ACCESS_KEY_ID}"
+          echo "::add-mask::${AWS_SECRET_ACCESS_KEY}"
+          echo "::add-mask::${AWS_SESSION_TOKEN}"
+          CA_TOKEN="$(AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID}" \
+            AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY}" \
+            AWS_SESSION_TOKEN="${AWS_SESSION_TOKEN}" \
+            aws codeartifact get-authorization-token \
+              --domain westcode \
+              --domain-owner 069962555850 \
+              --query authorizationToken \
+              --output text)"
+          test -n "${CA_TOKEN}"
+          echo "::add-mask::${CA_TOKEN}"
+          SW_TOKEN=""
+          if [ -n "${SHOPWARE_PACKAGES_TOKEN:-}" ]; then
+            if SW_EXTRACTED="$(jq -er '.bearer["packages.shopware.com"] // empty' <<<"${SHOPWARE_PACKAGES_TOKEN}" 2>/dev/null)" && [ -n "${SW_EXTRACTED}" ]; then
+              SW_TOKEN="${SW_EXTRACTED}"
+            else
+              SW_TOKEN="${SHOPWARE_PACKAGES_TOKEN}"
+            fi
+            echo "::add-mask::${SW_TOKEN}"
+          fi
+          HOST_RULES="$(jq -cn --arg pw "${CA_TOKEN}" --arg sw "${SW_TOKEN}" '
+            [{
+              matchHost: "westcode-069962555850.d.codeartifact.eu-central-1.amazonaws.com",
+              hostType: "pypi",
+              username: "aws",
+              password: $pw
+            }]
+            + (if $sw != "" then [{
+              matchHost: "packages.shopware.com",
+              hostType: "packagist",
+              token: $sw
+            }] else [] end)
+          ')"
+          echo "RENOVATE_HOST_RULES=${HOST_RULES}" >> "$GITHUB_ENV"
+
+      - name: Restore Renovate cache
+        id: cache-restore
+        uses: actions/cache/restore@v6
+        with:
+          path: /tmp/renovate/cache
+          key: renovate-cache-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            renovate-cache-
+
+      - name: Fix restored Renovate cache ownership
+        if: ${{ steps.cache-restore.outputs.cache-matched-key != '' }}
+        run: sudo chown -R 12021:0 /tmp/renovate
+
+      - name: Run Renovate
+        uses: renovatebot/github-action@v46.3.13
+        with:
+          configurationFile: deploy/renovate.json
+          token: ${{ steps.app-token.outputs.token }}
+        env:
+          LOG_LEVEL: info
+          RENOVATE_USERNAME: "${{ steps.app-token.outputs.app-slug }}[bot]"
+          RENOVATE_GIT_AUTHOR: ${{ steps.bot-env.outputs.git_author }}
+          RENOVATE_REPOSITORY_CACHE: enabled
+
+      - name: Normalize Renovate cache ownership for save
+        if: ${{ !(github.event_name == 'workflow_dispatch' && (inputs.dry_run == 'full' || inputs.dry_run == 'lookup')) }}
+        run: |
+          if [ -d /tmp/renovate/cache ]; then
+            sudo chown -R "$(id -u):$(id -g)" /tmp/renovate/cache
+          fi
+
+      - name: Save Renovate cache
+        if: ${{ !(github.event_name == 'workflow_dispatch' && (inputs.dry_run == 'full' || inputs.dry_run == 'lookup')) && steps.cache-restore.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: /tmp/renovate/cache
+          key: renovate-cache-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Enable GitHub auto-merge on Major PRs (awaits human approval)
+        if: ${{ !(github.event_name == 'workflow_dispatch' && (inputs.dry_run == 'full' || inputs.dry_run == 'lookup')) }}
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: |
+          set -euo pipefail
+          MUTATION='mutation($id: ID!, $method: PullRequestMergeMethod!) {
+            enablePullRequestAutoMerge(input: {pullRequestId: $id, mergeMethod: $method}) {
+              pullRequest { number autoMergeRequest { enabledAt } }
+            }
+          }'
+          for REPO in $(jq -r '.repositories[].repository' deploy/renovate.json); do
+            if ! MERGE_METHOD="$(gh api "repos/${REPO}" --jq '
+              if .allow_auto_merge != true then "DISABLED"
+              elif .allow_squash_merge then "SQUASH"
+              elif .allow_merge_commit then "MERGE"
+              else "REBASE" end
+            ' 2>/dev/null)"; then
+              echo "::warning::Cannot inspect ${REPO} with GitHub App token; skipping Major auto-merge setup"
+              continue
+            fi
+            if [ "${MERGE_METHOD}" = "DISABLED" ]; then
+              echo "::warning::Allow auto-merge is disabled on ${REPO}; skipping"
+              continue
+            fi
+            PRS_JSON="$(gh pr list --repo "${REPO}" --state open --label "major-update" \
+              --json number,id,author,autoMergeRequest,reviewDecision)"
+            jq -r --arg slug "${APP_SLUG}" '
+              .[]
+              | select(
+                  (.author.login == "app/\($slug)" or .author.login == "\($slug)[bot]" or .author.login == $slug)
+                  and .autoMergeRequest == null
+                  and .reviewDecision == "REVIEW_REQUIRED"
+                )
+              | "\(.number)\t\(.id)"
+            ' <<<"${PRS_JSON}" | while IFS=$'\t' read -r PR_NUM PR_ID; do
+              [ -n "${PR_ID}" ] || continue
+              echo "Enabling GitHub auto-merge (${MERGE_METHOD}, awaiting human approval) on ${REPO}#${PR_NUM}"
+              gh api graphql \
+                -f query="${MUTATION}" \
+                -f id="${PR_ID}" \
+                -f method="${MERGE_METHOD}" >/dev/null
+            done
+          done
+
+      - name: Notify on runner failure or stalled security PRs
+        if: ${{ always() }}
+        env:
+          JOB_STATUS: ${{ job.status }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
+          DRY_RUN_MODE: ${{ github.event_name == 'workflow_dispatch' && (inputs.dry_run == 'full' || inputs.dry_run == 'lookup') && inputs.dry_run || '' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RUNNER_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          send_slack() {
+            local msg="$1"
+            [ -n "${SLACK_WEBHOOK_URL:-}" ] || return 0
+            local payload
+            payload="$(jq -cn --arg text "${msg}" '{text: $text}')"
+            curl --tlsv1.2 -fsSL -X POST -H "Content-Type: application/json" \
+              --data "${payload}" "${SLACK_WEBHOOK_URL}" >/dev/null \
+              || echo "::warning::Failed to send Slack webhook notification"
+          }
+          if [ "${JOB_STATUS}" = "failure" ]; then
+            {
+              echo "### :x: Renovate-Runner fehlgeschlagen"
+              echo "- Workflow-Lauf: ${RUN_URL}"
+            } >> "$GITHUB_STEP_SUMMARY"
+            send_slack ":x: *Renovate-Runner fehlgeschlagen* (\`${RUNNER_REPO}\`): <${RUN_URL}|Workflow-Logs öffnen>"
+          fi
+          if [ -n "${GH_TOKEN:-}" ] && [ -n "${APP_SLUG:-}" ] && [ -z "${DRY_RUN_MODE:-}" ] && [ -f deploy/renovate.json ]; then
+            STALLED_MD=""
+            STALLED_SLACK=""
+            for REPO in $(jq -r '.repositories[].repository' deploy/renovate.json); do
+              if ! PRS_JSON="$(gh pr list --repo "${REPO}" --state open --label "security" \
+                --json number,title,url,createdAt,author,labels 2>/dev/null)"; then
+                echo "::warning::Could not inspect security PRs on ${REPO}"
+                continue
+              fi
+              REPO_MD="$(jq -r --arg slug "${APP_SLUG}" --arg repo "${REPO}" '
+                .[]
+                | select(
+                    (.author.login == "app/\($slug)" or .author.login == "\($slug)[bot]" or .author.login == $slug)
+                    and (([.labels[].name] | index("major-update")) == null)
+                    and ((now - (.createdAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)) > 86400)
+                  )
+                | ((now - (.createdAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)) / 3600 | floor) as $h
+                | "- [`\($repo)#\(.number)`](\(.url)) — \(.title) (\($h)h offen)"
+              ' <<<"${PRS_JSON}")"
+              REPO_SLACK="$(jq -r --arg slug "${APP_SLUG}" --arg repo "${REPO}" '
+                .[]
+                | select(
+                    (.author.login == "app/\($slug)" or .author.login == "\($slug)[bot]" or .author.login == $slug)
+                    and (([.labels[].name] | index("major-update")) == null)
+                    and ((now - (.createdAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)) > 86400)
+                  )
+                | ((now - (.createdAt | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601)) / 3600 | floor) as $h
+                | "• <\(.url)|`\($repo)#\(.number)`>: \(.title) (\($h)h offen)"
+              ' <<<"${PRS_JSON}")"
+              if [ -n "${REPO_MD}" ]; then
+                STALLED_MD="${STALLED_MD:+${STALLED_MD}$'\n'}${REPO_MD}"
+                STALLED_SLACK="${STALLED_SLACK:+${STALLED_SLACK}$'\n'}${REPO_SLACK}"
+              fi
+            done
+            if [ -n "${STALLED_MD}" ]; then
+              {
+                echo "### :warning: Blockierte Non-Major-Security-PRs (> 24h offen)"
+                echo "${STALLED_MD}"
+              } >> "$GITHUB_STEP_SUMMARY"
+              if [ "${EVENT_SCHEDULE:-}" = "0 12 * * *" ]; then
+                send_slack ":warning: *Blockierte Security-PRs (> 24h offen, vermutlich rote CI)* in \`${RUNNER_REPO}\`:
+          ${STALLED_SLACK}"
+              fi
+            elif [ "${JOB_STATUS}" = "success" ]; then
+              {
+                echo "### :white_check_mark: Renovate-Status"
+                echo "- Keine blockierten Non-Major-Security-PRs (> 24h offen)."
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi

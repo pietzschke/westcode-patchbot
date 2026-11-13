@@ -1,29 +1,180 @@
 {
-  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
+  "$schema": "https://docs.renovatebot.com/renovate-global-schema.json",
+  "platform": "github",
+  "onboarding": false,
+  "requireConfig": "ignored",
+  "forkProcessing": "enabled",
+  "globalExtends": [
     "config:recommended"
   ],
   "timezone": "Europe/Berlin",
-  "dependencyDashboard": true,
+  "schedule": [
+    "* 0-6 * * 1-4"
+  ],
+  "automergeSchedule": [
+    "* * * * 1-4"
+  ],
+  "semanticCommits": "enabled",
+  "dependencyDashboard": {
+    "enabled": true
+  },
+  "minimumReleaseAge": "3 days",
+  "minimumReleaseAgeBehaviour": "timestamp-optional",
+  "internalChecksFilter": "strict",
+  "constraints": {
+    "npm": "^11.0.0"
+  },
+  "npmrc": "allow-remote=all\n",
+  "npmrcMerge": true,
+  "osvVulnerabilityAlerts": true,
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "groupName": null,
+    "groupSlug": null,
+    "minimumReleaseAge": null,
+    "prConcurrentLimit": 0,
+    "branchConcurrentLimit": 0,
+    "prHourlyLimit": 0,
+    "schedule": [
+      "at any time"
+    ],
+    "automergeSchedule": [
+      "at any time"
+    ],
+    "addLabels": [
+      "security",
+      "dependencies"
+    ]
+  },
+  "repositories": [
+    {
+      "repository": "westcoder/westcode-patchbot",
+      "baseBranchPatterns": [
+        "main"
+      ],
+      "enabledManagers": [
+        "github-actions"
+      ],
+      "packageRules": [
+        {
+          "description": "Allow non-major GitHub Actions self-updates to automerge in runner repo without a separate CI workflow",
+          "matchManagers": [
+            "github-actions"
+          ],
+          "matchUpdateTypes": [
+            "minor",
+            "patch",
+            "pin",
+            "digest"
+          ],
+          "ignoreTests": true
+        }
+      ]
+    },
+    {
+      "repository": "westcoder/ack-desk",
+      "baseBranchPatterns": [
+        "develop"
+      ]
+    },
+    {
+      "repository": "westcoder/westcode-hub",
+      "baseBranchPatterns": [
+        "main"
+      ]
+    },
+    {
+      "repository": "westcoder/projectory",
+      "baseBranchPatterns": [
+        "develop"
+      ]
+    },
+    {
+      "repository": "westcoder/brockhaus",
+      "baseBranchPatterns": [
+        "develop"
+      ]
+    },
+    {
+      "repository": "westcoder/masteroil",
+      "baseBranchPatterns": [
+        "develop"
+      ]
+    },
+    {
+      "repository": "westcoder/wyze-agent",
+      "baseBranchPatterns": [
+        "develop"
+      ]
+    },
+    {
+      "repository": "westcoder/materialdatenbank",
+      "baseBranchPatterns": [
+        "develop"
+      ]
+    },
+    {
+      "repository": "westcoder/ses-service-app",
+      "baseBranchPatterns": [
+        "develop"
+      ]
+    },
+    {
+      "repository": "westcoder/ses-sl-sw-sync",
+      "baseBranchPatterns": [
+        "develop"
+      ]
+    },
+    {
+      "repository": "westcoder/service-center",
+      "baseBranchPatterns": [
+        "main"
+      ]
+    },
+    {
+      "repository": "westcoder/ses-shop",
+      "baseBranchPatterns": [
+        "main"
+      ],
+      "constraints": {
+        "npm": "^11.0.0",
+        "php": "^8.5.0"
+      },
+      "packageRules": [
+        {
+          "description": "Ignore local path Shopware plugins not published on Packagist",
+          "matchDatasources": [
+            "packagist"
+          ],
+          "matchPackageNames": [
+            "west/**",
+            "tcinn/**",
+            "jlau/**"
+          ],
+          "enabled": false
+        }
+      ]
+    },
+    {
+      "repository": "westcoder/csa",
+      "baseBranchPatterns": [
+        "develop"
+      ]
+    }
+  ],
   "enabledManagers": [
     "poetry",
+    "pep621",
     "npm",
+    "composer",
     "dockerfile",
     "docker-compose",
     "github-actions",
     "circleci"
   ],
-  "hostRules": [
-    {
-      "matchHost": "westcode-533267181938.d.codeartifact.eu-central-1.amazonaws.com",
-      "hostType": "pypi",
-      "username": "aws",
-      "password": "{{ secrets.CODEARTIFACT_AUTH_TOKEN }}"
-    }
-  ],
   "packageRules": [
     {
-      "description": "Group non-major updates to reduce PR noise",
+      "description": "Group all non-major updates (including monorepos) into a single nightly PR and automerge after green CI",
       "matchUpdateTypes": [
         "minor",
         "patch",
@@ -31,32 +182,79 @@
         "digest"
       ],
       "groupName": "non-major dependencies",
-      "groupSlug": "non-major"
+      "groupSlug": "non-major",
+      "automerge": true,
+      "platformAutomerge": false,
+      "ignoreTests": false,
+      "prPriority": 10,
+      "prConcurrentLimit": 10,
+      "branchConcurrentLimit": 10,
+      "prHourlyLimit": 0
     },
     {
-      "description": "Isolate major updates into dedicated PRs",
+      "description": "Throttle major updates to max 2 concurrent PRs/branches and max 1 new major PR alongside non-major without automerge",
       "matchUpdateTypes": [
         "major"
       ],
-      "groupName": null,
+      "automerge": false,
+      "rebaseWhen": "conflicted",
+      "prPriority": -5,
+      "prConcurrentLimit": 2,
+      "branchConcurrentLimit": 2,
+      "prHourlyLimit": 2,
       "labels": [
         "dependencies",
         "major-update"
       ]
     },
     {
-      "description": "Prioritize security updates in separate immediate PRs",
-      "matchCategories": [
-        "security"
+      "description": "Treat Python and PHP minor runtime upgrades (e.g. Python 3.13 -> 3.15, PHP 8.5 -> 8.6) like major updates without automerge",
+      "matchPackageNames": [
+        "python",
+        "cimg/python",
+        "php"
+      ],
+      "matchUpdateTypes": [
+        "minor"
       ],
       "groupName": null,
-      "schedule": [
-        "at any time"
-      ],
+      "groupSlug": null,
+      "automerge": false,
+      "rebaseWhen": "conflicted",
+      "prPriority": -5,
+      "prConcurrentLimit": 2,
+      "branchConcurrentLimit": 2,
+      "prHourlyLimit": 2,
       "labels": [
-        "security",
-        "dependencies"
+        "dependencies",
+        "major-update"
       ]
+    },
+    {
+      "description": "Keep tightly coupled Angular packages grouped together on major upgrades",
+      "matchPackageNames": [
+        "@angular/**",
+        "@angular-devkit/**",
+        "@schematics/angular",
+        "ng-packagr"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "groupName": "Angular monorepo (major)",
+      "groupSlug": "angular-monorepo-major"
+    },
+    {
+      "description": "Keep tightly coupled Shopware packages grouped together on major upgrades",
+      "matchPackageNames": [
+        "shopware/**",
+        "@shopware-ag/**"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "groupName": "Shopware monorepo (major)",
+      "groupSlug": "shopware-monorepo-major"
     }
   ]
 }

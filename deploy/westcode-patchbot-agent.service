@@ -1,21 +1,27 @@
 [Unit]
-Description=Westcode Patchbot Host Agent
+Description=Westcode Patchbot Host Agent (read-only telemetry report)
 After=network-online.target docker.service
 Wants=network-online.target
 
+# Triggered by westcode-patchbot-agent.timer; the unit itself is never enabled.
 [Service]
-Type=simple
+Type=oneshot
 User=root
 Group=root
 EnvironmentFile=/etc/westcode-patchbot/agent.env
 ExecStart=/usr/bin/python3 /usr/local/libexec/westcode-patchbot-agent
-Restart=always
-RestartSec=60
+TimeoutStartSec=300
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=westcode-patchbot-agent
-PrivateTmp=true
+# Read-only hardening: the agent only reads host state and posts one report.
+ProtectSystem=strict
 ProtectHome=true
-
-[Install]
-WantedBy=multi-user.target
+PrivateTmp=true
+NoNewPrivileges=true
+ReadOnlyPaths=/opt
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true

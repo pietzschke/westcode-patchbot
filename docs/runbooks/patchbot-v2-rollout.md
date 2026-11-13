@@ -413,8 +413,13 @@ unabhängig vom Patchbot-Server.
    - `RENOVATE_APP_ID`: App ID von `westcode-renovate`
    - `RENOVATE_APP_PRIVATE_KEY`: erzeugter Private Key (`.pem`-Inhalt)
    - `SHOPWARE_PACKAGES_TOKEN`: Bearer-Token (oder `COMPOSER_AUTH`-JSON) für `packages.shopware.com` (`ses-shop`)
+   - `SLACK_WEBHOOK_URL` *(optional)*: Incoming-Webhook-URL für Sofort-Alerts bei fehlgeschlagenen Runner-Läufen sowie
+     eine tägliche Mittags-Zusammenfassung (`12:00 UTC`), falls Non-Major-Security-PRs länger als 24 h offen bleiben
+     (z. B. wegen roter Projekt-CI). Ohne Secret schreibt der Lauf den Status ausschließlich in `$GITHUB_STEP_SUMMARY`.
 4. Workflow und `deploy/renovate.json` müssen auf dem Default-Branch (`main`) von `westcoder/westcode-patchbot`
-   liegen, damit GitHub die `schedule`-Läufe ausführt. Ersttest unter Actions → „Renovate“ → „Run workflow“:
+   liegen, damit GitHub die `schedule`-Läufe ausführt. Der Workflow persistiert `/tmp/renovate/cache`
+   (`RENOVATE_REPOSITORY_CACHE: enabled`) per `actions/cache/restore@v6` und `actions/cache/save@v6` zwischen den Läufen.
+   Ersttest unter Actions → „Renovate“ → „Run workflow“:
    zuerst mit `dry_run = full` (prüft Log-Vorschau ohne PR-Erstellung), danach mit `dry_run = off`.
 5. **AWS CodeArtifact (Phase 2, aktiv):** `.github/workflows/renovate.yml` bezieht vor jedem Lauf per GitHub OIDC
    (`id-token: write`) über die Read-only-Rolle

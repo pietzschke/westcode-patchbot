@@ -215,11 +215,20 @@ def test_renovate_pilot_config_and_workflow():
     assert 'hostType: "packagist"' in oidc_step["run"]
     assert "${{" not in oidc_step["run"]
 
+    cache_restore_step = next(s for s in steps if str(s.get("uses", "")).startswith("actions/cache/restore@"))
+    cache_save_step = next(s for s in steps if str(s.get("uses", "")).startswith("actions/cache/save@"))
+    assert cache_restore_step["uses"] == "actions/cache/restore@v6"
+    assert cache_save_step["uses"] == "actions/cache/save@v6"
+    assert cache_restore_step["with"]["path"] == "/tmp/renovate/cache"
+    assert cache_save_step["with"]["path"] == "/tmp/renovate/cache"
+
     renovate_step = next(s for s in steps if str(s.get("uses", "")).startswith("renovatebot/github-action@"))
+    assert steps.index(cache_restore_step) < steps.index(renovate_step) < steps.index(cache_save_step)
     assert re.fullmatch(r"renovatebot/github-action@v\d+\.\d+\.\d+", renovate_step["uses"])
     assert renovate_step["with"]["configurationFile"] == "deploy/renovate.json"
     assert "RENOVATE_GIT_AUTHOR" in renovate_step["env"]
     assert "RENOVATE_USERNAME" in renovate_step["env"]
+    assert renovate_step["env"]["RENOVATE_REPOSITORY_CACHE"] == "enabled"
 
     major_automerge_step = next(s for s in steps if "enablePullRequestAutoMerge" in str(s.get("run", "")))
     assert steps.index(major_automerge_step) > steps.index(renovate_step)
@@ -229,6 +238,14 @@ def test_renovate_pilot_config_and_workflow():
     assert "--label \"major-update\"" in major_automerge_step["run"]
     assert "if ! MERGE_METHOD=" in major_automerge_step["run"]
     assert "${{" not in major_automerge_step["run"]
+
+    alert_step = next(s for s in steps if "SLACK_WEBHOOK_URL" in s.get("env", {}))
+    assert steps.index(alert_step) > steps.index(major_automerge_step)
+    assert "always()" in str(alert_step["if"])
+    assert "JOB_STATUS" in alert_step["env"]
+    assert "86400" in alert_step["run"]
+    assert "0 12 * * *" in alert_step["run"]
+    assert "${{" not in alert_step["run"]
 
     for path in (renovate_path, workflow_path, runbook_path):
         assert "533267181938" not in path.read_text(encoding="utf-8"), path.name

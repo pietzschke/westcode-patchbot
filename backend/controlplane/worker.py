@@ -21,7 +21,13 @@ from research.triage_ai import lift_filter_if_blocked
 from triage.dismissal import evaluate_reopen_rules
 from triage.jobs import enqueue
 from triage.models import OPEN_STATES, PARKED_STATES, Finding, Job, ScheduleState
-from triage.notifications import escalate_overdue, record_health, send_new_finding_dms, sync_slack_user_ids
+from triage.notifications import (
+    check_renovate_health,
+    escalate_overdue,
+    record_health,
+    send_new_finding_dms,
+    sync_slack_user_ids,
+)
 from triage.schedule import due_jobs
 from triage.verification import verify_findings
 from triage.webhooks import process_pending_webhooks, reconcile_open_prs
@@ -98,13 +104,18 @@ def _test_dm(job, d: Deps, now):
     d.slack.post_message(member.slack_user_id, "👋 Test-Nachricht vom Westcode Patchbot – die Verbindung funktioniert.")
 
 
+def _pr_reconcile(job, d: Deps, now):
+    reconcile_open_prs(github=d.github, now=now)
+    check_renovate_health(github=d.github, slack=d.slack, now=now)
+
+
 DEFAULT_HANDLERS: dict[str, Callable] = {
     "daily_scan": _daily_scan,
     "notion_sync": _notion_sync,
     "signals_refresh": _signals_refresh,
     "slack_user_sync": lambda job, d, now: sync_slack_user_ids(slack=d.slack),
     "grace_eval": _grace_eval,
-    "pr_reconcile": lambda job, d, now: reconcile_open_prs(github=d.github, now=now),
+    "pr_reconcile": _pr_reconcile,
     "maintenance_analysis": _maintenance_analysis,
     "test_dm": _test_dm,
 }

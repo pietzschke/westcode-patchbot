@@ -42,6 +42,7 @@ class GitHubClient(Protocol):
     def push_branch(self, repo: str, branch: str, worktree: Path) -> None: ...
     def recent_file_authors(self, repo: str, paths: list[str], since: datetime) -> list[dict]: ...
     def combined_ci_status(self, repo: str, ref: str) -> str: ...
+    def latest_workflow_check(self, repo: str, branch: str, check_name: str = "renovate") -> dict | None: ...
 
 
 def require_patchbot_branch(branch: str) -> None:
@@ -254,3 +255,36 @@ class RestGitHubClient:
         if any(r.get("status") != "completed" for r in runs):
             return "pending"
         return "success"
+
+    def _completed_check(self, repo: str, ref: str, check_name: str) -> dict | None:
+        resp = self._request("GET", f"/repos/{repo}/commits/{ref}/check-runs", params={"check_name": check_name, "per_page": 20})
+        resp.raise_for_status()
+        completed = [
+            r for r in (resp.json().get("check_runs") or [])
+            if r.get("status") == "completed" and (not check_name or r.get("name") == check_name)
+        ]
+        if not completed:
+            return None
+        latest = max(completed, key=lambda r: (str(r.get("completed_at") or ""), int(r.get("id") or 0)))
+        return {
+            "id": int(latest.get("id") or 0),
+            "status": "completed",
+            "conclusion": str(latest.get("conclusion") or ""),
+            "completed_at": str(latest.get("completed_at") or ""),
+            "html_url": str(latest.get("html_url") or ""),
+        }
+
+    def latest_workflow_check(self, repo: str, branch: str, check_name: str = "renovate") -> dict | None:
+        head_check = self._completed_check(repo, branch, check_name)
+        if head_check is not None:
+            return head_check
+        commits_resp = self._request("GET", f"/repos/{repo}/commits", params={"sha": branch, "per_page": 5})
+        commits_resp.raise_for_status()
+        for commit in commits_resp.json() or []:
+            sha = str(commit.get("sha") or "")
+            if not sha:
+                continue
+            found = self._completed_check(repo, sha, check_name)
+            if found is not None:
+                return found
+        return {"status": "missing"}

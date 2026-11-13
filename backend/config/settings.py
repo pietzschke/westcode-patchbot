@@ -132,3 +132,5 @@ GITHUB_APP_ID = os.environ.get("GITHUB_APP_ID", "")
 GITHUB_APP_INSTALLATION_ID = os.environ.get("GITHUB_APP_INSTALLATION_ID", "")
 GITHUB_APP_PRIVATE_KEY_PATH = os.environ.get("GITHUB_APP_PRIVATE_KEY_PATH", "")
 PATCHBOT_AI_PATCHING = os.environ.get("PATCHBOT_AI_PATCHING", "false").lower() == "true"
+PATCHBOT_RENOVATE_REPO = os.environ.get("PATCHBOT_RENOVATE_REPO", "westcoder/westcode-patchbot").strip()
+PATCHBOT_RENOVATE_BRANCH = os.environ.get("PATCHBOT_RENOVATE_BRANCH", "main").strip()

@@ -129,3 +129,44 @@ def test_upsert_marker_comment_creates_when_missing():
     })
     client = RestGitHubClient(app=StaticToken(), session=session)
     assert client.upsert_marker_comment("westcoder/mdb", 41, "<!-- m -->", "body") == 9
+
+
+def test_latest_workflow_check_returns_most_recent_completed_run():
+    base = "https://api.github.com/repos/westcoder/westcode-patchbot"
+    session = FakeSession({
+        ("GET", f"{base}/commits/main/check-runs"): Resp({
+            "check_runs": [
+                {"id": 103, "name": "renovate", "status": "in_progress", "conclusion": None,
+                 "completed_at": None, "html_url": "https://github.com/r/103"},
+                {"id": 101, "name": "renovate", "status": "completed", "conclusion": "failure",
+                 "completed_at": "2026-11-09T02:05:00Z", "html_url": "https://github.com/r/101"},
+                {"id": 102, "name": "renovate", "status": "completed", "conclusion": "success",
+                 "completed_at": "2026-11-09T03:05:00Z", "html_url": "https://github.com/r/102"},
+            ]
+        }),
+    })
+    client = RestGitHubClient(app=StaticToken(), session=session)
+    assert client.latest_workflow_check("westcoder/westcode-patchbot", "main", "renovate") == {
+        "id": 102,
+        "status": "completed",
+        "conclusion": "success",
+        "completed_at": "2026-11-09T03:05:00Z",
+        "html_url": "https://github.com/r/102",
+    }
+
+
+def test_latest_workflow_check_walks_recent_commits_when_head_has_no_completed_run():
+    base = "https://api.github.com/repos/westcoder/westcode-patchbot"
+    session = FakeSession({
+        ("GET", f"{base}/commits/main/check-runs"): Resp({"check_runs": []}),
+        ("GET", f"{base}/commits"): Resp([{"sha": "sha-new"}, {"sha": "sha-prev"}]),
+        ("GET", f"{base}/commits/sha-new/check-runs"): Resp({"check_runs": []}),
+        ("GET", f"{base}/commits/sha-prev/check-runs"): Resp({
+            "check_runs": [
+                {"id": 99, "name": "renovate", "status": "completed", "conclusion": "success",
+                 "completed_at": "2026-11-09T02:10:00Z", "html_url": "https://github.com/r/99"}
+            ]
+        }),
+    })
+    client = RestGitHubClient(app=StaticToken(), session=session)
+    assert client.latest_workflow_check("westcoder/westcode-patchbot", "main", "renovate")["id"] == 99

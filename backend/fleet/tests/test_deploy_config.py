@@ -310,6 +310,7 @@ def test_worker_has_repo_cache_and_docker_socket_only_in_ai_patching_override():
     assert "run_worker" in " ".join(worker["command"])
     assert "/var/run/docker.sock" not in _volumes(worker)
     assert env["PATCHBOT_AI_PATCHING"] == "false"
+    assert "westcoder/westcode-patchbot" in env["PATCHBOT_RENOVATE_REPO"]
     # Host path == container path, so `docker run --volume <worktree>:/work` resolves on the host.
     cache = env["PATCHBOT_REPO_CACHE"]
     assert f"repo-cache:{cache}" in _volumes(worker)

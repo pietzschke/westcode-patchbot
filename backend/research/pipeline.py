@@ -23,7 +23,7 @@ from research.signals_feed import apply_signals, fetch_epss, refresh_epss
 from research.triage_ai import apply_triage, lift_filter_if_blocked
 from triage.findings import log_event
 from triage.models import OPEN_STATES
-from triage.notifications import record_health, send_new_finding_dms
+from triage.notifications import check_renovate_health, record_health, send_new_finding_dms
 from triage.ownership import assign
 from triage.verification import verify_findings
 
@@ -115,6 +115,7 @@ def run_scan(
             record_health("github", True, now=now)
 
         sync_maintenance_updates(github=github)
+        check_renovate_health(github=github, slack=slack, now=now)
         verify_findings(github=github, image_scan_lookup=lookup_image_scan, now=now)
         send_new_finding_dms(slack=slack, now=now, target_raised=result.target_raised)
     except Exception as exc:  # noqa: BLE001 - a crashed run must show up as FAILED, never as clean

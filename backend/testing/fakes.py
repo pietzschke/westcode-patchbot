@@ -21,6 +21,7 @@ class FakeGitHub:
         authors=(),
         head_shas=None,
         ci_status=None,
+        workflow_checks=None,
     ):
         self.repos = list(repos)
         self.files = set(files)
@@ -30,6 +31,7 @@ class FakeGitHub:
         self.authors = list(authors)
         self.head_shas = dict(head_shas or {})
         self.ci_status = dict(ci_status or {})
+        self.workflow_checks = dict(workflow_checks or {})
         self.comments: dict[tuple[str, int], list[str]] = {}
         self.pushes: list[tuple[str, str]] = []
         self.created_pulls: list[dict] = []
@@ -87,6 +89,9 @@ class FakeGitHub:
 
     def combined_ci_status(self, repo, ref):
         return self.ci_status.get((repo, ref), "none")
+
+    def latest_workflow_check(self, repo, branch, check_name="renovate"):
+        return self.workflow_checks.get((repo, branch, check_name))
 
 
 class FakeLLM:

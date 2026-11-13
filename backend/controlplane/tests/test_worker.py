@@ -152,3 +152,27 @@ def test_build_deps_without_github_key_fails_with_clear_error(settings, key_path
     settings.GITHUB_APP_PRIVATE_KEY_PATH = key_path
     with pytest.raises(ImproperlyConfigured, match="GITHUB_APP_PRIVATE_KEY_PATH"):
         build_deps()
+
+
+@pytest.mark.django_db
+def test_pr_reconcile_job_checks_renovate_health(settings):
+    from triage.models import IntegrationHealth
+
+    settings.SLACK_TEAM_CHANNEL_ID = "C-TEAM"
+    settings.PATCHBOT_RENOVATE_REPO = "westcoder/westcode-patchbot"
+    settings.PATCHBOT_RENOVATE_BRANCH = "main"
+    gh = FakeGitHub(workflow_checks={
+        ("westcoder/westcode-patchbot", "main", "renovate"): {
+            "id": 42,
+            "status": "completed",
+            "conclusion": "failure",
+            "completed_at": "2026-11-09T05:30:00Z",
+            "html_url": "https://github.com/westcoder/westcode-patchbot/actions/runs/42",
+        }
+    })
+    slack = FakeSlack()
+    d = Deps(github=gh, slack=slack, llm=None, trivy=None, bumper=None, worktrees=None)
+    enqueue("pr_reconcile")
+    process_jobs(d, now=NOW)
+    assert IntegrationHealth.objects.get(name="renovate").ok is False
+    assert len(slack.messages) == 1

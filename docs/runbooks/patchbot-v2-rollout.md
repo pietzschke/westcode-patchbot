@@ -117,6 +117,8 @@ Vorlage: `deploy/.env.example`. „Pflicht“ = `docker compose` bricht ohne Wer
 | `GITHUB_APP_ID` | worker | ja | App ID der GitHub App. |
 | `GITHUB_APP_INSTALLATION_ID` | worker | ja | Installation ID in der Org `westcoder`. |
 | `GITHUB_APP_PRIVATE_KEY_PATH` | worker | – | fest `/run/secrets/github_app_private_key` (Datei `deploy/secrets/github-app.pem`). |
+| `PATCHBOT_RENOVATE_REPO` | worker | nein | Default `westcoder/westcode-patchbot` (leer = deaktiviert). Überwacht den letzten `renovate`-Check-Run für Status-Ampel (`IntegrationHealth: renovate`) und Team-Channel-Alert. |
+| `PATCHBOT_RENOVATE_BRANCH` | worker | nein | Default `main` (Branch mit dem geplanten Renovate-Workflow). |
 | `ANTHROPIC_API_KEY` | worker | nein | Ohne Key bleiben Findings `UNTRIAGED`, kein Patching. |
 | `PATCHBOT_CLAUDE_MODEL` | worker | nein | Default `claude-sonnet-5-5`. |
 | `PATCHBOT_CLAUDE_EFFORT` | worker | nein | leer = Modell-Default. |
@@ -360,8 +362,9 @@ Org `westcoder` → Settings → Developer settings → GitHub Apps → „New G
 Danach:
 
 1. Private Key erzeugen → `deploy/secrets/github-app.pem` (uid 1000, Modus 0400). App ID = `GITHUB_APP_ID`.
-2. In `westcoder` installieren mit **„Only select repositories“** – alle Projekt-Repositories, **ohne
-   `westcode-infra`** (D-5). Neue Repositories müssen der Installation manuell hinzugefügt werden.
+2. In `westcoder` installieren mit **„Only select repositories“** – alle Projekt-Repositories inklusive
+   `westcoder/westcode-patchbot` (für den Renovate-Runner-Healthcheck), **ohne `westcode-infra`** (D-5). Neue
+   Repositories müssen der Installation manuell hinzugefügt werden.
    Installation ID (aus der URL `…/installations/<id>`) = `GITHUB_APP_INSTALLATION_ID`.
 3. **Org-Ruleset** „Patchbot nur auf patchbot/*“ (Org → Settings → Repository → Rulesets → New branch ruleset):
    - Target: alle Repositories; Branches: Include `~ALL`, Exclude `refs/heads/patchbot/**`
@@ -413,9 +416,12 @@ unabhängig vom Patchbot-Server.
    - `RENOVATE_APP_ID`: App ID von `westcode-renovate`
    - `RENOVATE_APP_PRIVATE_KEY`: erzeugter Private Key (`.pem`-Inhalt)
    - `SHOPWARE_PACKAGES_TOKEN`: Bearer-Token (oder `COMPOSER_AUTH`-JSON) für `packages.shopware.com` (`ses-shop`)
-   - `SLACK_WEBHOOK_URL` *(optional)*: Incoming-Webhook-URL für Sofort-Alerts bei fehlgeschlagenen Runner-Läufen sowie
-     eine tägliche Mittags-Zusammenfassung (`12:00 UTC`), falls Non-Major-Security-PRs länger als 24 h offen bleiben
-     (z. B. wegen roter Projekt-CI). Ohne Secret schreibt der Lauf den Status ausschließlich in `$GITHUB_STEP_SUMMARY`.
+   - `SLACK_WEBHOOK_URL` *(optional, nur Übergang bis Patchbot-v2-Go-Live)*: Incoming-Webhook-URL für Sofort-Alerts bei
+     fehlgeschlagenen Runner-Läufen sowie eine tägliche Mittags-Zusammenfassung (`12:00 UTC`). **Sobald Patchbot v2 auf
+     `patch.westcode.de` läuft, bleibt `SLACK_WEBHOOK_URL` leer:** Patchbot überwacht den Renovate-Runner stündlich über
+     `PATCHBOT_RENOVATE_REPO` (Ampel → GRAU + gedrosselter Post an `SLACK_TEAM_CHANNEL_ID`) und meldet durch rote CI
+     blockierte Renovate-Security-PRs personengenau per DM (`SLACK_BOT_TOKEN`). In GitHub Actions schreibt der Schritt
+     dann ausschließlich in `$GITHUB_STEP_SUMMARY`.
 4. Workflow und `deploy/renovate.json` müssen auf dem Default-Branch (`main`) von `westcoder/westcode-patchbot`
    liegen, damit GitHub die `schedule`-Läufe ausführt. Der Workflow persistiert `/tmp/renovate/cache`
    (`RENOVATE_REPOSITORY_CACHE: enabled`) per `actions/cache/restore@v6` und `actions/cache/save@v6` zwischen den Läufen.

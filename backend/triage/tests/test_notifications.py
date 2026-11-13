@@ -226,3 +226,114 @@ def test_os_eol_dm_line_is_readable():
     line = _finding_line(f)
     assert "__os_eol__" not in line
     assert "Betriebssystem-EOL: Ubuntu 20.04 → 24.04" in line
+
+
+def test_new_finding_dm_marks_red_ci_on_renovate_pr_and_does_not_repeat(team):
+    a, _ = team
+    f = make_finding(
+        state="NEW",
+        assignee=a,
+        pr_source="BOT",
+        pr_number=108,
+        pr_url="https://github.com/westcoder/brockhaus/pull/108",
+        ci_status="failure",
+    )
+    slack = FakeSlack()
+    assert send_new_finding_dms(slack=slack, now=MONDAY_9) == 1
+    assert send_new_finding_dms(slack=slack, now=MONDAY_9) == 0
+    rendered = _section_texts(slack.messages[0][2])
+    assert "<https://github.com/westcoder/brockhaus/pull/108|Renovate-PR #108>" in rendered
+    assert "rote CI" in rendered
+    assert NotificationLog.objects.filter(finding=f, kind="BOT_CI_FAILED", stage=108).count() == 1
+
+
+def test_bot_pr_turning_red_after_initial_dm_sends_one_followup_notice(team):
+    a, _ = team
+    f = make_finding(
+        state="NEW",
+        assignee=a,
+        pr_source="BOT",
+        pr_number=108,
+        pr_url="https://github.com/westcoder/brockhaus/pull/108",
+        ci_status="pending",
+    )
+    slack = FakeSlack()
+    assert send_new_finding_dms(slack=slack, now=MONDAY_9) == 1
+    assert "rote CI" not in _section_texts(slack.messages[0][2])
+
+    f.state = "IN_PROGRESS"
+    f.ci_status = "failure"
+    f.save()
+
+    assert send_new_finding_dms(slack=slack, now=MONDAY_9) == 1
+    assert send_new_finding_dms(slack=slack, now=MONDAY_9) == 0
+    assert len(slack.messages) == 2
+    assert slack.messages[1][0] == "UA"
+    assert "Auto-Merge" in _section_texts(slack.messages[1][2])
+    assert "Renovate-PR #108" in _section_texts(slack.messages[1][2])
+
+
+def test_renovate_health_records_failure_turns_ampel_grey_and_alerts_team_channel_once(team, settings):
+    from controlplane.ampel import compute_ampel
+    from testing.fakes import FakeGitHub
+    from triage.notifications import check_renovate_health
+
+    settings.PATCHBOT_RENOVATE_REPO = "westcoder/westcode-patchbot"
+    settings.PATCHBOT_RENOVATE_BRANCH = "main"
+    gh = FakeGitHub(workflow_checks={
+        ("westcoder/westcode-patchbot", "main", "renovate"): {
+            "id": 9001,
+            "status": "completed",
+            "conclusion": "failure",
+            "completed_at": "2026-11-09T07:30:00Z",
+            "html_url": "https://github.com/westcoder/westcode-patchbot/actions/runs/9001",
+        }
+    })
+    slack = FakeSlack()
+
+    assert check_renovate_health(github=gh, slack=slack, now=MONDAY_9) is False
+    assert check_renovate_health(github=gh, slack=slack, now=MONDAY_9) is False
+
+    health = IntegrationHealth.objects.get(name="renovate")
+    assert health.ok is False
+    assert "fehlgeschlagen" in health.last_error
+    assert any("renovate:" in c["text"] for c in compute_ampel(now=MONDAY_9)["causes"])
+    assert len(slack.messages) == 1
+    assert slack.messages[0][0] == "C-TEAM"
+    assert "Renovate-Runner fehlgeschlagen" in slack.messages[0][1]
+
+
+def test_renovate_health_marks_stale_run_after_26h_and_clears_when_green(team, settings):
+    from testing.fakes import FakeGitHub
+    from triage.notifications import check_renovate_health
+
+    settings.PATCHBOT_RENOVATE_REPO = "westcoder/westcode-patchbot"
+    settings.PATCHBOT_RENOVATE_BRANCH = "main"
+    stale_gh = FakeGitHub(workflow_checks={
+        ("westcoder/westcode-patchbot", "main", "renovate"): {
+            "id": 9002,
+            "status": "completed",
+            "conclusion": "success",
+            "completed_at": "2026-11-08T04:00:00Z",  # 28h before MONDAY_9 (08:00 UTC)
+            "html_url": "https://github.com/westcoder/westcode-patchbot/actions/runs/9002",
+        }
+    })
+    slack = FakeSlack()
+    assert check_renovate_health(github=stale_gh, slack=slack, now=MONDAY_9) is False
+    assert check_renovate_health(github=stale_gh, slack=slack, now=MONDAY_9) is False
+    assert IntegrationHealth.objects.get(name="renovate").ok is False
+    assert "28 h alt" in IntegrationHealth.objects.get(name="renovate").last_error
+    assert len(slack.messages) == 1
+
+    fresh_gh = FakeGitHub(workflow_checks={
+        ("westcoder/westcode-patchbot", "main", "renovate"): {
+            "id": 9003,
+            "status": "completed",
+            "conclusion": "success",
+            "completed_at": "2026-11-09T07:30:00Z",
+            "html_url": "https://github.com/westcoder/westcode-patchbot/actions/runs/9003",
+        }
+    })
+    assert check_renovate_health(github=fresh_gh, slack=slack, now=MONDAY_9) is True
+    health = IntegrationHealth.objects.get(name="renovate")
+    assert (health.ok, health.last_error) == (True, "")

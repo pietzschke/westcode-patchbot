@@ -366,15 +366,18 @@ Danach:
    `westcoder/westcode-patchbot` (für den Renovate-Runner-Healthcheck), **ohne `westcode-infra`** (D-5). Neue
    Repositories müssen der Installation manuell hinzugefügt werden.
    Installation ID (aus der URL `…/installations/<id>`) = `GITHUB_APP_INSTALLATION_ID`.
-3. **Org-Ruleset** „Patchbot nur auf patchbot/*“ (Org → Settings → Repository → Rulesets → New branch ruleset):
-   - Target: alle Repositories; Branches: Include `~ALL`, Exclude `refs/heads/patchbot/**`
+3. **Repository-Rulesets „Patchbot nur auf patchbot/*“** (auf GitHub Team stehen keine Org-weiten Rulesets zur Verfügung;
+   das mitgelieferte Skript legt das Ruleset idempotent pro Projekt-Repository an):
+   ```bash
+   PATCHBOT_APP_ID="<GITHUB_APP_ID>" ./deploy/setup-patchbot-rulesets.sh
+   ```
+   - Target: alle Branches (`~ALL`) außer `refs/heads/patchbot/**`
    - Rules: „Restrict creations“, „Restrict updates“, „Restrict deletions“
-   - Bypass list: die Rollen/Teams/Apps, die heute auf diese Branches pushen dürfen (Repository-Rollen
-     Write/Maintain/Admin, Renovate, Dependabot, CI-Integrationen) – **nicht** `westcode-patchbot`.
+   - Bypass list: Repository-Rollen Write (`2`), Maintain (`4`), Admin (`5`) sowie `westcode-renovate` (`5715770`) –
+     **nicht** `westcode-patchbot`. (Pusht in einem Repo eine weitere GitHub App direkt auf Branches, deren App-ID vorab
+     in `bypass_actors` ergänzen; zuerst auf einem einzelnen Test-Repo per `./deploy/setup-patchbot-rulesets.sh ack-desk` prüfen.)
    - Ergebnis: Patchbot kann ausschließlich `patchbot/*` anlegen und aktualisieren; Default-Branches und
      Bot-Branches sind für die App gesperrt.
-   - Vorsicht: Das Ruleset betrifft jeden Akteur, der nicht auf der Bypass-Liste steht. Vor dem Aktivieren
-     prüfen, welche Integrationen pushen; zuerst auf einem Test-Repository ausprobieren.
 4. Prüfen: mit einem Installation-Token einen Push auf `main` eines Test-Repos versuchen → muss scheitern;
    Push auf `patchbot/test` → muss klappen; Zugriff auf `westcoder/westcode-infra` → 404.
 
@@ -460,21 +463,13 @@ Anbindung je nach Hosting des Patchbot-Servers:
 
 - **EC2:** Rolle als Instance Profile anhängen. Damit Container IMDSv2 erreichen, das Hop-Limit auf 2 setzen:
   `aws ec2 modify-instance-metadata-options --instance-id <id> --http-tokens required --http-put-response-hop-limit 2`.
-- **Außerhalb von AWS:** IAM-User `patchbot-ecr` mit nur `sts:AssumeRole` auf `patchbot-ecr-read`, Profil
-  per Override einbinden (Datei `deploy/compose.aws.yaml`, mit `-f` zusätzlich angeben):
-
-  ```yaml
-  services:
-    worker:
-      environment:
-        AWS_CONFIG_FILE: /run/secrets/aws_config
-        AWS_SHARED_CREDENTIALS_FILE: /run/secrets/aws_credentials
-        AWS_PROFILE: patchbot-ecr
-      secrets: [aws_config, aws_credentials]
-  secrets:
-    aws_config:      { file: ./secrets/aws-config }       # [profile patchbot-ecr] role_arn=… source_profile=patchbot-ecr-user
-    aws_credentials: { file: ./secrets/aws-credentials }  # [patchbot-ecr-user] aws_access_key_id=…
-  ```
+- **Hetzner Cloud (Standard bei Westcode, außerhalb von AWS):** In `westcoder/westcode-infra` unter
+  `stacks/aws-westcode/ecr-pull.tf` in `local.ecr_pull_identities` ergänzen:
+  `"patchbot" = local.ecr_repositories` (legt den IAM-User `/westcode-infra/patchbot-ecr-pull` begrenzt durch
+  `customer-ecr-boundary` an). Access Key in 1Password hinterlegen, auf `patch.westcode.de` unter
+  `/opt/patchbot/deploy/secrets/aws-credentials` (`uid 1000`, Modus `0400`, Profil `[patchbot-ecr-pull]`) ablegen
+  und das fertige Override `deploy/compose.aws.yaml` mit `-f` einbinden:
+  `docker compose -f deploy/compose.yaml -f deploy/compose.aws.yaml up -d`.
 
 Prüfen: `docker compose -f deploy/compose.yaml exec worker trivy image --image-src remote --skip-db-update --quiet <ecr-image>@sha256:…`.
 
@@ -754,15 +749,14 @@ run_worker --once` (braucht GitHub-App-Konfiguration).
 
 ## 16. Offene Punkte
 
-- **Hosting des Patchbot-Servers** (EC2 oder extern) entscheidet über die ECR-Anbindung (Abschnitt 7).
+- **ECR-Zugang (Hetzner → AWS):** in `westcode-infra` (`stacks/aws-westcode/ecr-pull.tf`) `"patchbot" = local.ecr_repositories` eintragen und Key als `deploy/secrets/aws-credentials` mit `deploy/compose.aws.yaml` einbinden (Abschnitt 7).
 - **Reverse Proxy:** nginx oder Caddy; zwei Allowlists pflegen – Egress-IPs der 23 VMs (nur Agent-Endpunkt) und Büro/VPN (UI/API).
 - **Trivy-DB-Aktualisierung:** `research.trivy.update_trivy_db()` wird vom Scheduler noch nicht aufgerufen;
   bis dahin übernimmt der Dienst `trivy-db` die Aktualisierung (alle 6 h).
-- **Renovate:** läuft zentral per GitHub Actions (`.github/workflows/renovate.yml`, GitHub App
-  `westcode-renovate`) inklusive kurzlebigem AWS-CodeArtifact-OIDC-Token
-  (`arn:aws:iam::069962555850:role/westcode-infra/github-renovate-codeartifact-read`), aktuell für
-  `westcoder/ack-desk`, `westcoder/westcode-hub` und `westcoder/projectory`. Weitere Projekte können schrittweise
-  in der App-Installation freigeschaltet und in `deploy/renovate.json` ergänzt werden.
+- **Renovate:** läuft produktiv per GitHub Actions (`.github/workflows/renovate.yml`, GitHub App
+  `westcode-renovate`) inklusive AWS-CodeArtifact-OIDC-Token, Shopware-Auth und Actions-Cache für alle 12 aktiven
+  Anwendungs-Repositories plus Selbst-Update auf `westcoder/westcode-patchbot`; Patchbot überwacht den Runner-Status
+  über `PATCHBOT_RENOVATE_REPO`.
 - **CI-Status über Commit-Statuses:** reporten Projekte nur Commit-Statuses statt Checks, braucht die App
   zusätzlich `Commit statuses: Read` und Patchbot eine Code-Anpassung.
 - **Private Registries (CodeArtifact):** weder Worker-Bumps noch Sandbox haben Registry-Credentials; solche

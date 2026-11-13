@@ -1,0 +1,26 @@
+# Override für Hetzner-Hosting außerhalb von AWS (Runbook §7):
+# Bindet die Read-only-ECR-Zugangsdaten des IAM-Users `patchbot-ecr-pull`
+# (`stacks/aws-westcode/ecr-pull.tf` in westcode-infra, begrenzt durch customer-ecr-boundary)
+# ausschließlich in den `worker`-Container ein (`web` und `postgres` erhalten keine AWS-Keys).
+#
+# Datei vor dem Start anlegen:
+#   sudo install -o 1000 -g 1000 -m 0400 <aws-credentials> /opt/patchbot/deploy/secrets/aws-credentials
+#
+# Starten:
+#   docker compose -f deploy/compose.yaml -f deploy/compose.aws.yaml up -d
+services:
+  worker:
+    environment:
+      AWS_SHARED_CREDENTIALS_FILE: /run/secrets/aws_credentials
+      AWS_PROFILE: patchbot-ecr-pull
+    secrets:
+      - github_app_private_key
+      - aws_credentials
+
+secrets:
+  aws_credentials:
+    # INI-Format:
+    # [patchbot-ecr-pull]
+    # aws_access_key_id = AKIA...
+    # aws_secret_access_key = ...
+    file: ./secrets/aws-credentials

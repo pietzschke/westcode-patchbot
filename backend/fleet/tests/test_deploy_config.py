@@ -454,3 +454,41 @@ def test_worker_waits_for_a_downloaded_trivy_db():
     check = services["trivy-db"]["healthcheck"]["test"]
     assert check[-1] == "/home/patchbot/.cache/trivy/db/metadata.json"
     assert services["worker"]["depends_on"]["trivy-db"] == {"condition": "service_healthy"}
+
+
+def test_ci_workflow_runs_backend_agent_and_frontend_checks():
+    ci_path = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+    assert ci_path.is_file()
+    ci = yaml.safe_load(ci_path.read_text(encoding="utf-8"))
+    assert ci["permissions"] == {"contents": "read"}
+    all_runs = "\n".join(
+        step["run"]
+        for job in ci["jobs"].values()
+        for step in job["steps"]
+        if "run" in step
+    )
+    assert "${{" not in all_runs
+    assert "ruff check" in all_runs
+    assert "../agent" in all_runs
+    assert "pytest" in all_runs
+    assert "../agent/tests" in (REPO_ROOT / "backend" / "pyproject.toml").read_text(encoding="utf-8")
+    assert "ng test" in all_runs
+    assert "ng build" in all_runs
+
+
+def test_aws_ecr_override_attaches_credentials_only_to_worker():
+    aws = _compose("compose.aws.yaml")
+    assert set(aws["services"]) == {"worker"}
+    env = _env(aws["services"]["worker"])
+    assert env["AWS_SHARED_CREDENTIALS_FILE"] == "/run/secrets/aws_credentials"
+    assert env["AWS_PROFILE"] == "patchbot-ecr-pull"
+    assert "aws_credentials" in aws["services"]["worker"]["secrets"]
+    assert "SLACK_APP_TOKEN" not in (REPO_ROOT / "deploy" / "compose.aws.yaml").read_text(encoding="utf-8")
+
+
+def test_patchbot_ruleset_script_restricts_non_patchbot_branches():
+    script = (REPO_ROOT / "deploy" / "setup-patchbot-rulesets.sh").read_text(encoding="utf-8")
+    assert "set -euo pipefail" in script
+    assert "refs/heads/patchbot/**" in script
+    assert "5715770" in script
+    assert "repos/westcoder/" in script

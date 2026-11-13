@@ -1,0 +1,68 @@
+name: CI
+
+"on":
+  push:
+    branches:
+      - main
+      - feat/patchbot-v2
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-and-agent:
+    name: Backend & Agent (Python 3.12)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@v10
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Install backend dependencies
+        run: uv sync --frozen
+
+      - name: Run Ruff linter
+        run: uvx ruff check . ../agent
+
+      - name: Run backend and agent/tests suite
+        run: uv run pytest -q
+
+  frontend:
+    name: Frontend (Angular 22 / Node 24)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Run unit tests
+        run: npx ng test --watch=false
+
+      - name: Build production bundle
+        run: npx ng build

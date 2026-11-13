@@ -123,11 +123,12 @@ def test_renovate_pilot_config_and_workflow():
     assert vuln_alerts["addLabels"] == ["security", "dependencies"]
     assert vuln_alerts["schedule"] == ["at any time"]
     assert vuln_alerts["automergeSchedule"] == ["at any time"]
-    vuln_groups = {r["groupSlug"]: r for r in vuln_alerts["packageRules"]}
-    assert "@angular/**" in vuln_groups["angular-monorepo"]["matchPackageNames"]
-    assert vuln_groups["angular-monorepo"]["branchTopic"] == "angular-monorepo-vulnerability"
-    assert "shopware/**" in vuln_groups["shopware-monorepo"]["matchPackageNames"]
-    assert "@shopware-ag/**" in vuln_groups["shopware-monorepo"]["matchPackageNames"]
+    assert "packageRules" not in vuln_alerts
+
+    rule_slugs = {r.get("groupSlug"): r for r in renovate["packageRules"] if r.get("groupSlug")}
+    assert "@angular/**" in rule_slugs["angular-monorepo-major"]["matchPackageNames"]
+    assert "shopware/**" in rule_slugs["shopware-monorepo-major"]["matchPackageNames"]
+    assert "@shopware-ag/**" in rule_slugs["shopware-monorepo-major"]["matchPackageNames"]
 
     assert renovate["schedule"] == ["* 0-6 * * 1-4"]
     assert renovate["automergeSchedule"] == ["* * * * 1-4"]
@@ -200,6 +201,7 @@ def test_renovate_pilot_config_and_workflow():
     assert "inputs.dry_run == 'lookup'" in dry_run_expr
     assert "%5Bbot%5D" in dry_run_step["run"]
     assert "@users.noreply.github.com" in dry_run_step["run"]
+    assert "/installation/repositories" in dry_run_step["run"]
 
     oidc_step = next(s for s in steps if "RENOVATE_HOST_RULES" in str(s.get("run", "")))
     assert oidc_step["env"]["ROLE_ARN"] == "arn:aws:iam::069962555850:role/westcode-infra/github-renovate-codeartifact-read"

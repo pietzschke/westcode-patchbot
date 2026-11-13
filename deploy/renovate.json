@@ -44,30 +44,6 @@
     "addLabels": [
       "security",
       "dependencies"
-    ],
-    "packageRules": [
-      {
-        "description": "Keep tightly coupled Angular packages grouped together even for security alerts",
-        "matchPackageNames": [
-          "@angular/**",
-          "@angular-devkit/**",
-          "@schematics/angular",
-          "ng-packagr"
-        ],
-        "groupName": "Angular monorepo",
-        "groupSlug": "angular-monorepo",
-        "branchTopic": "angular-monorepo-vulnerability"
-      },
-      {
-        "description": "Keep tightly coupled Shopware packages grouped together even for security alerts",
-        "matchPackageNames": [
-          "shopware/**",
-          "@shopware-ag/**"
-        ],
-        "groupName": "Shopware monorepo",
-        "groupSlug": "shopware-monorepo",
-        "branchTopic": "shopware-monorepo-vulnerability"
-      }
     ]
   },
   "repositories": [

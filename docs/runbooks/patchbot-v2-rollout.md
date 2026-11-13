@@ -400,8 +400,8 @@ unabhängig vom Patchbot-Server.
    `projectory`, `brockhaus`, `masteroil`, `wyze-agent`, `materialdatenbank`, `ses-service-app`, `ses-sl-sw-sync`,
    `service-center`, `ses-shop`, `csa`). Für reguläre Releases gilt ein 3-Tage-Cooldown (`minimumReleaseAge: "3 days"`,
    `minimumReleaseAgeBehaviour: "timestamp-optional"`), während Security-Fixes (`vulnerabilityAlerts`) ohne Wartezeit
-   durchgehen und gekoppelte Monorepos (`@angular/**`, `shopware/**`, `@shopware-ag/**`) auch bei Security-Alerts gemeinsam
-   gruppiert bleiben. In allen Repositories mit Review-Pflicht ist `Allow auto-merge` aktiviert und `westcode-renovate`
+   durchgehen und gekoppelte Monorepos (`@angular/**`, `shopware/**`, `@shopware-ag/**`) bei Major-Upgrades gemeinsam in einem
+   Monorepo-PR gebündelt werden. In allen Repositories mit Review-Pflicht ist `Allow auto-merge` aktiviert und `westcode-renovate`
    als PR-Bypass (`pull_request`) hinterlegt:
    - **Non-Major-Security-PRs (`vulnerabilityAlerts` auf Patch/Minor) & Non-Major-Sammel-PR (`renovate/non-major`):**
      werden von Renovate nach grüner CI direkt per API (`platformAutomerge: false`) **ohne manuelles Approval** gemerged.

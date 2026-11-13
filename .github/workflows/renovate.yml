@@ -84,6 +84,21 @@ jobs:
             echo "Filtered run to ${MATCHED} repository/repositories:"
             jq -r '.repositories[].repository' deploy/renovate.json
           fi
+          INSTALLED_REPOS="$(gh api /installation/repositories --paginate --jq '.repositories[].full_name')"
+          for CFG_REPO in $(jq -r '.repositories[].repository' deploy/renovate.json); do
+            if ! grep -Fxq "${CFG_REPO}" <<<"${INSTALLED_REPOS}"; then
+              echo "::warning::Repository ${CFG_REPO} is in deploy/renovate.json but not yet enabled in the GitHub App installation — skipping until enabled"
+            fi
+          done
+          jq --arg inst "${INSTALLED_REPOS}" '
+            ($inst | split("\n") | map(select(length > 0))) as $installed
+            | .repositories |= map(select(.repository as $r | ($installed | index($r)) != null))
+          ' deploy/renovate.json > deploy/renovate.installed.json
+          if [ "$(jq '.repositories | length' deploy/renovate.installed.json)" -eq 0 ]; then
+            echo "::error::None of the selected repositories are enabled in the GitHub App installation yet"
+            exit 1
+          fi
+          mv deploy/renovate.installed.json deploy/renovate.json
 
       - name: Configure registry credentials (AWS CodeArtifact OIDC & Shopware)
         env:

@@ -100,9 +100,10 @@ def test_renovate_pilot_config_and_workflow():
     vuln_alerts = renovate["vulnerabilityAlerts"]
     assert vuln_alerts["enabled"] is True
     assert vuln_alerts["groupName"] is None
-    assert vuln_alerts["automerge"] is True
-    assert vuln_alerts["platformAutomerge"] is False
-    assert vuln_alerts["ignoreTests"] is False
+    assert vuln_alerts["groupSlug"] is None
+    assert "automerge" not in vuln_alerts
+    assert "labels" not in vuln_alerts
+    assert vuln_alerts["addLabels"] == ["security", "dependencies"]
     assert vuln_alerts["schedule"] == ["at any time"]
     assert vuln_alerts["automergeSchedule"] == ["at any time"]
 

@@ -399,11 +399,11 @@ unabhängig vom Patchbot-Server.
    `deploy/renovate.json` (`ack-desk`, `westcode-hub`, `projectory`, `brockhaus`, `masteroil`, `wyze-agent`,
    `materialdatenbank`, `ses-service-app`, `ses-sl-sw-sync`, `service-center`, `ses-shop`, `csa`). In allen Repositories mit
    Review-Pflicht ist `Allow auto-merge` aktiviert und `westcode-renovate` als PR-Bypass (`pull_request`) hinterlegt:
-   - **Security-PRs (`vulnerabilityAlerts`) & Non-Major-Sammel-PR (`renovate/non-major`):** werden von Renovate nach
-     grüner CI direkt per API (`platformAutomerge: false`) **ohne manuelles Approval** gemerged.
-   - **Major-PRs & Python/PHP-Minor-Runtime (`major-update`):** Renovate merged sie nicht direkt (`automerge: false`);
-     ein Nachlaufschritt in `.github/workflows/renovate.yml` aktiviert GitHubs natives `enablePullRequestAutoMerge`,
-     sodass GitHub den PR erst nach **1 menschlichem Approval** (und grüner CI) automatisch merged.
+   - **Non-Major-Security-PRs (`vulnerabilityAlerts` auf Patch/Minor) & Non-Major-Sammel-PR (`renovate/non-major`):**
+     werden von Renovate nach grüner CI direkt per API (`platformAutomerge: false`) **ohne manuelles Approval** gemerged.
+   - **Major-PRs (inkl. Major-Security-Upgrades) & Python/PHP-Minor-Runtime (`major-update`):** Renovate merged sie nicht
+     direkt (`automerge: false`); ein Nachlaufschritt in `.github/workflows/renovate.yml` aktiviert GitHubs natives
+     `enablePullRequestAutoMerge`, sodass GitHub den PR erst nach **1 menschlichem Approval** (und grüner CI) automatisch merged.
 3. In `westcoder/westcode-patchbot` unter Settings → Secrets and variables → Actions als Repository Secrets
    hinterlegen:
    - `RENOVATE_APP_ID`: App ID von `westcode-renovate`
